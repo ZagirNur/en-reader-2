@@ -82,6 +82,20 @@ def test_look_at_is_not_phrasal() -> None:
     assert bad == [], [u.lemma for u in bad]
 
 
+def test_literal_prep_verbs_are_not_phrasal() -> None:
+    # Prepositional verbs that look like phrasals in the surface form but are
+    # dep_="prep" in spaCy and must stay out of the curated dictionary so they
+    # don't mislabel literal motion/handling as phrasal.
+    for sentence in (
+        "He ran into the room.",
+        "They dealt with the issue.",
+        "She came across the street.",
+    ):
+        _tokens, units = analyze(sentence)
+        bad = [u for u in units if u.kind in {"phrasal", "split_phrasal"}]
+        assert bad == [], (sentence, [u.lemma for u in bad])
+
+
 def test_mwe_and_phrasal_coexist() -> None:
     _tokens, units = analyze("In order to look up the word.")
     mwe = _of_kind(units, "mwe")

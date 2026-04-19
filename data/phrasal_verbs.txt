@@ -136,7 +136,6 @@ close up
 
 # come
 come about
-come across
 come along
 come apart
 come around
@@ -190,7 +189,6 @@ cut up
 
 # deal
 deal out
-deal with
 
 # dig
 dig in
@@ -352,7 +350,6 @@ give up
 
 # go
 go about
-go across
 go after
 go ahead
 go along
@@ -373,7 +370,6 @@ go up
 grow apart
 grow away
 grow back
-grow into
 grow out
 grow up
 
@@ -661,14 +657,12 @@ roll over
 roll up
 
 # run
-run across
 run along
 run around
 run away
 run back
 run down
 run in
-run into
 run off
 run on
 run out
