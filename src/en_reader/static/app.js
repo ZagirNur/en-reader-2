@@ -8,6 +8,8 @@ const state = {
   route: "/",
   currentBook: null,
   userDict: {},
+  // Library listing: undefined = not fetched, [] = fetched-and-empty, array = loaded.
+  books: undefined,
 };
 
 function setState(patch) {
@@ -37,6 +39,10 @@ function navigate(path) {
     const prev = state.currentBook;
     if (!prev || prev.bookId !== parsed.bookId) patch.currentBook = null;
   }
+  // Leaving the library? Forget the cached listing so a later visit refetches.
+  if (state.view === "library" && parsed.view !== "library") {
+    patch.books = undefined;
+  }
   setState(patch);
 }
 
@@ -48,6 +54,9 @@ function onPopState() {
   if (parsed.view === "reader") {
     const prev = state.currentBook;
     if (!prev || prev.bookId !== parsed.bookId) patch.currentBook = null;
+  }
+  if (state.view === "library" && parsed.view !== "library") {
+    patch.books = undefined;
   }
   setState(patch);
 }
@@ -86,10 +95,186 @@ async function loadBookContent(bookId, offset = 0, limit = 1) {
 }
 
 // --- views ---
+// Long-tap timer for `.card` touch interactions on mobile. Kept at module
+// scope so `touchmove`/`touchend` listeners can cancel the pending timeout.
+let _longTapTimer = null;
+let _longTapCard = null;
+
+function closeCardMenu() {
+  document.querySelectorAll(".card-menu").forEach((n) => n.remove());
+  document.removeEventListener("click", _onDocClickCloseMenu, true);
+}
+
+function _onDocClickCloseMenu(e) {
+  // Clicks inside the menu itself are handled by the menu's own listeners —
+  // we still want the menu to stay open while the user hovers the button.
+  if (e.target && e.target.closest && e.target.closest(".card-menu")) return;
+  closeCardMenu();
+}
+
+function showCardMenu(cardEl, bookId) {
+  closeCardMenu();
+  const menu = document.createElement("div");
+  menu.className = "card-menu";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "Удалить";
+  btn.addEventListener("click", async () => {
+    closeCardMenu();
+    if (!confirm("Удалить книгу?")) return;
+    try {
+      await apiDelete(`/api/books/${encodeURIComponent(bookId)}`);
+    } catch (err) {
+      toast("Не удалось удалить");
+      return;
+    }
+    const books = Array.isArray(state.books)
+      ? state.books.filter((b) => b.id !== bookId)
+      : state.books;
+    setState({ books });
+  });
+  menu.appendChild(btn);
+
+  // Position relative to the card: attach to the card itself (which is
+  // position: relative) and pin to the top-right corner.
+  menu.style.top = "6px";
+  menu.style.right = "6px";
+  cardEl.appendChild(menu);
+
+  // Close on any outside click. Capture phase so it fires before the click
+  // bubbles to any other delegated listeners.
+  setTimeout(() => {
+    document.addEventListener("click", _onDocClickCloseMenu, true);
+  }, 0);
+}
+
 function renderLibrary() {
   const root = document.getElementById("root");
-  root.innerHTML = `<h1>Library</h1><button id="open-demo">Open demo</button>`;
-  document.getElementById("open-demo").onclick = () => navigate("/books/1");
+
+  // Kick off the fetch on first entry. `state.books === undefined` means
+  // "never fetched"; an explicit [] is a valid loaded-and-empty state.
+  if (state.books === undefined) {
+    root.innerHTML = `<div class="loader">Loading…</div>`;
+    apiGet("/api/books")
+      .then((data) => {
+        if (state.view !== "library") return;
+        setState({ books: Array.isArray(data) ? data : [] });
+      })
+      .catch((err) => setState({ view: "error", error: err.message }));
+    return;
+  }
+
+  root.innerHTML = "";
+  const main = document.createElement("main");
+  main.className = "library";
+
+  const header = document.createElement("header");
+  header.className = "library-header";
+  const h1 = document.createElement("h1");
+  h1.textContent = "Моя полка";
+  const avatar = document.createElement("div");
+  avatar.className = "avatar";
+  avatar.textContent = "E";
+  header.appendChild(h1);
+  header.appendChild(avatar);
+  main.appendChild(header);
+
+  const grid = document.createElement("div");
+  grid.className = "grid";
+
+  const books = state.books;
+  const isEmpty = !books || books.length === 0;
+  if (isEmpty) {
+    main.classList.add("library-empty");
+  }
+
+  if (!isEmpty) {
+    for (const b of books) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "card";
+      card.dataset.bookId = String(b.id);
+
+      const cover = document.createElement("div");
+      cover.className = "cover-placeholder";
+      cover.textContent = "📖";
+      card.appendChild(cover);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const title = document.createElement("div");
+      title.className = "title";
+      title.textContent = b.title || "";
+      const author = document.createElement("div");
+      author.className = "author";
+      author.textContent = b.author || "";
+      meta.appendChild(title);
+      meta.appendChild(author);
+      card.appendChild(meta);
+
+      grid.appendChild(card);
+    }
+  }
+
+  const addCard = document.createElement("button");
+  addCard.type = "button";
+  addCard.className = "add-card";
+  addCard.innerHTML = ""; // reset (we use DOM below)
+  addCard.appendChild(document.createTextNode("+"));
+  addCard.appendChild(document.createElement("br"));
+  addCard.appendChild(document.createTextNode("Добавить книгу"));
+  grid.appendChild(addCard);
+
+  main.appendChild(grid);
+  root.appendChild(main);
+
+  // --- delegated listeners on `.grid` ---
+  grid.addEventListener("click", (e) => {
+    // If a click happens on the menu itself, don't trigger card navigation.
+    if (e.target && e.target.closest && e.target.closest(".card-menu")) return;
+    const add = e.target.closest(".add-card");
+    if (add) {
+      toast("Upload — скоро (M12.4)");
+      return;
+    }
+    const card = e.target.closest(".card[data-book-id]");
+    if (card) {
+      const id = Number(card.dataset.bookId);
+      navigate(`/books/${id}`);
+    }
+  });
+
+  grid.addEventListener("contextmenu", (e) => {
+    const card = e.target.closest(".card[data-book-id]");
+    if (!card) return;
+    e.preventDefault();
+    const id = Number(card.dataset.bookId);
+    showCardMenu(card, id);
+  });
+
+  // --- mobile long-tap (≥ 500 ms) ---
+  grid.addEventListener("touchstart", (e) => {
+    const card = e.target.closest(".card[data-book-id]");
+    if (!card) return;
+    _longTapCard = card;
+    clearTimeout(_longTapTimer);
+    _longTapTimer = setTimeout(() => {
+      if (!_longTapCard) return;
+      const id = Number(_longTapCard.dataset.bookId);
+      showCardMenu(_longTapCard, id);
+      _longTapCard = null;
+      _longTapTimer = null;
+    }, 500);
+  }, { passive: true });
+
+  const cancelLongTap = () => {
+    clearTimeout(_longTapTimer);
+    _longTapTimer = null;
+    _longTapCard = null;
+  };
+  grid.addEventListener("touchmove", cancelLongTap, { passive: true });
+  grid.addEventListener("touchend", cancelLongTap, { passive: true });
+  grid.addEventListener("touchcancel", cancelLongTap, { passive: true });
 }
 
 // --- reader render ---
