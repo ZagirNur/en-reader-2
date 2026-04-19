@@ -70,6 +70,9 @@ function renderLibrary() {
 }
 
 // --- reader render ---
+const IMAGE_MARKER_RE_JS = /IMG[0-9a-f]{12}/g;
+const IMAGE_MARKER_LEN = 15; // "IMG" + 12 hex chars
+
 function buildPageSection(page) {
   const section = document.createElement("section");
   section.className = "page";
@@ -87,12 +90,17 @@ function buildPageSection(page) {
   const tokens = page.tokens || [];
   const units = page.units || [];
   const text = page.text || "";
+  const pageImages = (page.images || []).slice().sort((a, b) => a.position - b.position);
+  const bookId = (state.demo && state.demo.book_id != null) ? state.demo.book_id : 1;
 
   // token local index → unit object
   const unitByToken = new Map();
   for (const unit of units) {
     for (const tid of unit.token_ids) unitByToken.set(tid, unit);
   }
+
+  // Set of positions where a marker starts, for token-skip decisions.
+  const imagePositions = new Set(pageImages.map((img) => img.position));
 
   let para = document.createElement("p");
   body.appendChild(para);
@@ -108,10 +116,70 @@ function buildPageSection(page) {
     para.appendChild(sent);
   };
 
-  // Literal gap text; \n\n+ starts a new <p>; sentence wrapper continues.
-  const appendGap = (gap) => {
+  let imgCursor = 0;
+
+  const insertImage = (img) => {
+    const el = document.createElement("img");
+    el.className = "inline-image";
+    el.src = `/api/books/${bookId}/images/${encodeURIComponent(img.image_id)}`;
+    el.alt = "";
+    // Images break the paragraph flow — append directly to <body> so the
+    // surrounding <p>s keep their margins.
+    body.appendChild(el);
+    // Start a fresh paragraph for the text that follows the image.
+    para = document.createElement("p");
+    body.appendChild(para);
+    sent = null;
+  };
+
+  // Flush any images whose position falls inside [from, to).
+  const flushImagesUpTo = (to) => {
+    while (imgCursor < pageImages.length && pageImages[imgCursor].position < to) {
+      insertImage(pageImages[imgCursor]);
+      imgCursor += 1;
+    }
+  };
+
+  // Emit literal gap text, splitting on blank-line runs and image markers.
+  // `gapStart` is the char offset of `gap` inside `text`.
+  const appendGap = (gap, gapStart) => {
     if (!gap) return;
-    const parts = gap.split(/\n\n+/);
+    // First, check for image markers inside this gap and split around them.
+    // Markers are always flanked by \n\n in the seed pipeline, so splitting
+    // naturally bubbles them into their own segments; but we scan for
+    // position-based hits to be safe.
+    let cursor = 0;
+    while (cursor < gap.length) {
+      const absStart = gapStart + cursor;
+      // Find the next marker position (if any) inside the remaining gap.
+      let nextMarkerRel = -1;
+      while (imgCursor < pageImages.length) {
+        const p = pageImages[imgCursor].position;
+        if (p < absStart) { imgCursor += 1; continue; }
+        if (p >= gapStart + gap.length) break;
+        nextMarkerRel = p - gapStart;
+        break;
+      }
+      const chunkEnd = nextMarkerRel >= 0 ? nextMarkerRel : gap.length;
+      const chunk = gap.slice(cursor, chunkEnd);
+      if (chunk) appendTextChunk(chunk);
+      if (nextMarkerRel >= 0) {
+        insertImage(pageImages[imgCursor]);
+        imgCursor += 1;
+        cursor = nextMarkerRel + IMAGE_MARKER_LEN;
+      } else {
+        cursor = gap.length;
+      }
+    }
+  };
+
+  // Append plain gap text (no image markers), handling \n\n paragraph splits.
+  const appendTextChunk = (chunk) => {
+    // Defensive: strip any stray markers that slipped through (shouldn't
+    // happen with correct positions, but keeps the DOM clean).
+    chunk = chunk.replace(IMAGE_MARKER_RE_JS, "");
+    if (!chunk) return;
+    const parts = chunk.split(/\n\n+/);
     for (let k = 0; k < parts.length; k++) {
       if (parts[k]) {
         const target = sent || para;
@@ -133,6 +201,24 @@ function buildPageSection(page) {
   let i = 0;
   while (i < tokens.length) {
     const tok = tokens[i];
+
+    // Skip tokens that coincide with an image marker position — those are
+    // the spaCy-produced "IMG<hex>" tokens. They must not render as text or
+    // as .word spans. The associated image is emitted when we hit the
+    // marker's position via the surrounding gap logic.
+    if (imagePositions.has(tok.idx_in_text) && /^IMG[0-9a-f]{12}$/.test(tok.text)) {
+      // Flush the image in-place in case no gap preceded it.
+      flushImagesUpTo(tok.idx_in_text + IMAGE_MARKER_LEN);
+      const nextTok = tokens[i + 1];
+      const gapStart = tok.idx_in_text + tok.text.length;
+      const gap = nextTok
+        ? text.slice(gapStart, nextTok.idx_in_text)
+        : text.slice(gapStart);
+      appendGap(gap, gapStart);
+      i += 1;
+      continue;
+    }
+
     const unit = unitByToken.get(i);
 
     // Open a new sentence wrapper at the sentence boundary.
@@ -165,10 +251,11 @@ function buildPageSection(page) {
       const lastId = ids[ids.length - 1];
       const lastTok = tokens[lastId];
       const nextTok = tokens[lastId + 1];
+      const gapStart = lastTok.idx_in_text + lastTok.text.length;
       const gap = nextTok
-        ? text.slice(lastTok.idx_in_text + lastTok.text.length, nextTok.idx_in_text)
-        : text.slice(lastTok.idx_in_text + lastTok.text.length);
-      appendGap(gap);
+        ? text.slice(gapStart, nextTok.idx_in_text)
+        : text.slice(gapStart);
+      appendGap(gap, gapStart);
       i = lastId + 1;
       continue;
     }
@@ -186,12 +273,16 @@ function buildPageSection(page) {
     // else: token inside a multi-token unit — already emitted.
 
     const nextTok = tokens[i + 1];
+    const gapStart = tok.idx_in_text + tok.text.length;
     const gap = nextTok
-      ? text.slice(tok.idx_in_text + tok.text.length, nextTok.idx_in_text)
-      : text.slice(tok.idx_in_text + tok.text.length);
-    appendGap(gap);
+      ? text.slice(gapStart, nextTok.idx_in_text)
+      : text.slice(gapStart);
+    appendGap(gap, gapStart);
     i += 1;
   }
+
+  // Any trailing images past the last token's end position.
+  flushImagesUpTo(text.length + 1);
 
   return section;
 }

@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from en_reader import storage
+from en_reader import images, storage
 from en_reader.metrics import counters
 from en_reader.translate import TranslateError, translate_one
 
@@ -82,6 +82,7 @@ def api_demo() -> dict:
                 auto_ids.append(unit["id"])
         page["auto_unit_ids"] = auto_ids
     payload["user_dict"] = user_dict
+    payload["book_id"] = images.DEMO_BOOK_ID
     return payload
 
 
@@ -112,6 +113,24 @@ def api_dictionary_delete(lemma: str) -> Response:
     # Idempotent: 204 whether or not the key existed.
     storage.dict_remove(lemma)
     return Response(status_code=204)
+
+
+@app.get("/api/books/{book_id}/images/{image_id}")
+def api_get_image(book_id: int, image_id: str) -> Response:
+    """Serve an inline illustration blob (M7.1).
+
+    Images are immutable once written (the id is random); cache
+    aggressively so browsers hit the network at most once per image.
+    """
+    result = storage.image_get(book_id, image_id)
+    if result is None:
+        raise HTTPException(status_code=404)
+    mime, data = result
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/{full_path:path}")

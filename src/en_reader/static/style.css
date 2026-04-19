@@ -70,6 +70,14 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 
 .word.loading { opacity: 0.45; pointer-events: none; }
 
+.inline-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem auto;
+  border-radius: 4px;
+}
+
 .toast {
   position: fixed; top: 1rem; left: 50%; transform: translateX(-50%) translateY(-20px);
   background: var(--ink); color: var(--bg);

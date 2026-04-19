@@ -77,8 +77,30 @@ def _migrate_v0_to_v1(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Create the ``book_images`` table for inline illustrations (M7.1).
+
+    BLOBs keep the on-disk footprint to a single ``.db`` file, which makes
+    backups trivial and matches the "one file per user" SQLite shape. If we
+    ever ship books with hundreds of megapixel-scale illustrations we can
+    migrate to filesystem storage — but that is not M7.
+    """
+    conn.execute("""
+        CREATE TABLE book_images (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          book_id INTEGER NOT NULL,
+          image_id TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          data BLOB NOT NULL,
+          UNIQUE(book_id, image_id)
+        )
+        """)
+    conn.execute("CREATE INDEX idx_book_images_book ON book_images(book_id)")
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
+    _migrate_v1_to_v2,
 ]
 
 
@@ -147,6 +169,45 @@ def dict_all() -> dict[str, str]:
     conn = get_db()
     cur = conn.execute("SELECT lemma, translation FROM user_dictionary")
     return {row["lemma"]: row["translation"] for row in cur.fetchall()}
+
+
+# ---------- book_images DAO ----------
+
+
+def image_save(book_id: int, image_id: str, mime_type: str, data: bytes) -> None:
+    """Insert an image blob. No-op if ``(book_id, image_id)`` already exists.
+
+    Seed runs are idempotent in spirit: re-running ``build_demo.py`` will
+    generate fresh ``image_id``s, so duplicate inserts on the same id are
+    not expected — the ``INSERT OR IGNORE`` is a belt-and-braces guard.
+    """
+    conn = get_db()
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO book_images(book_id, image_id, mime_type, data) "
+            "VALUES(?, ?, ?, ?)",
+            (book_id, image_id, mime_type, data),
+        )
+
+
+def image_get(book_id: int, image_id: str) -> tuple[str, bytes] | None:
+    """Return ``(mime_type, data)`` for the image, or ``None`` if missing."""
+    conn = get_db()
+    cur = conn.execute(
+        "SELECT mime_type, data FROM book_images WHERE book_id = ? AND image_id = ?",
+        (book_id, image_id),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return (row["mime_type"], bytes(row["data"]))
+
+
+def image_clear_book(book_id: int) -> None:
+    """Delete every image for ``book_id``. Test/seed helper."""
+    conn = get_db()
+    with conn:
+        conn.execute("DELETE FROM book_images WHERE book_id = ?", (book_id,))
 
 
 # ---------- test helpers ----------
