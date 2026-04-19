@@ -12,9 +12,33 @@ const state = {
   books: undefined,
 };
 
+// Reader scroll state (M9.3). Kept at module scope so we can detach the
+// listener when leaving the reader view without leaking a closure per render.
+let _readerScrollHandler = null;
+let _readerLastScrollY = 0;
+let _readerScrollRafId = 0;
+
 function setState(patch) {
+  const prevView = state.view;
   Object.assign(state, patch);
+  // Leaving the reader view? Tear down the scroll listener set up by
+  // renderReader so we don't keep reacting to scrolls on the library.
+  if (prevView === "reader" && state.view !== "reader") {
+    teardownReaderScroll();
+  }
   render();
+}
+
+function teardownReaderScroll() {
+  if (_readerScrollHandler) {
+    window.removeEventListener("scroll", _readerScrollHandler);
+    _readerScrollHandler = null;
+  }
+  if (_readerScrollRafId) {
+    cancelAnimationFrame(_readerScrollRafId);
+    _readerScrollRafId = 0;
+  }
+  _readerLastScrollY = 0;
 }
 
 // --- router ---
@@ -514,6 +538,29 @@ function applyAutoTranslation(pageSection, unitId, ru) {
   });
 }
 
+// Find the page `<section class="page">` whose vertical center is nearest to
+// the viewport center and return its `data-page-index` as a Number. Returns
+// 0 when no page sections exist in the DOM.
+function findVisiblePageIndex() {
+  const pages = document.querySelectorAll("section.page");
+  if (!pages.length) return 0;
+  const vCenter = window.innerHeight / 2;
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  for (const p of pages) {
+    const rect = p.getBoundingClientRect();
+    const center = rect.top + rect.height / 2;
+    const dist = Math.abs(center - vCenter);
+    if (dist < bestDist) {
+      bestDist = dist;
+      const raw = p.dataset.pageIndex;
+      const n = Number(raw);
+      bestIdx = Number.isFinite(n) ? n : 0;
+    }
+  }
+  return bestIdx;
+}
+
 function renderReader() {
   const root = document.getElementById("root");
   if (state.currentBook === null) {
@@ -522,17 +569,29 @@ function renderReader() {
     const bookId = parsed.bookId != null ? parsed.bookId : 1;
     root.innerHTML = `<div class="loader">Loading…</div>`;
     // Pull the first 20 pages up-front; true lazy loading is M10.3.
-    loadBookContent(bookId, 0, 20)
-      .then((data) => {
+    // Fetch book metadata in parallel — /api/books/{id}/content doesn't
+    // include the title, so we look it up in /api/books. A metadata failure
+    // must NOT block the reader: we fall back to "Книга".
+    Promise.all([
+      loadBookContent(bookId, 0, 20),
+      apiGet("/api/books").catch(() => null),
+    ])
+      .then(([data, books]) => {
         if (state.view !== "reader") return;
         // Seed state.userDict from server, merging over any local state so
         // an in-flight click isn't clobbered by a stale server payload.
         if (data && data.user_dict) {
           state.userDict = { ...data.user_dict, ...state.userDict };
         }
+        let title = "Книга";
+        if (Array.isArray(books)) {
+          const found = books.find((b) => b.id === data.book_id);
+          if (found && found.title) title = found.title;
+        }
         setState({
           currentBook: {
             bookId: data.book_id,
+            title,
             totalPages: data.total_pages,
             pages: data.pages || [],
             userDict: data.user_dict || {},
@@ -544,14 +603,43 @@ function renderReader() {
   }
 
   root.innerHTML = "";
+
+  // --- sticky header (M9.3) ---
+  const header = document.createElement("header");
+  header.className = "reader-header";
+
+  const backBtn = document.createElement("button");
+  backBtn.type = "button";
+  backBtn.className = "back-btn";
+  backBtn.setAttribute("aria-label", "В библиотеку");
+  backBtn.textContent = "←";
+  backBtn.addEventListener("click", () => navigate("/"));
+  header.appendChild(backBtn);
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "book-title";
+  // XSS discipline: title goes in via textContent only.
+  titleEl.textContent = state.currentBook.title || "Книга";
+  header.appendChild(titleEl);
+
+  // Right-side slot (reserved for settings button in a later milestone).
+  // Empty div keeps the three-column grid balanced.
+  const rightSlot = document.createElement("div");
+  rightSlot.className = "header-right";
+  header.appendChild(rightSlot);
+
+  const progressBar = document.createElement("div");
+  progressBar.className = "progress-bar";
+  const progressFill = document.createElement("div");
+  progressFill.className = "progress-fill";
+  progressFill.style.width = "0%";
+  progressBar.appendChild(progressFill);
+  header.appendChild(progressBar);
+
+  root.appendChild(header);
+
   const main = document.createElement("main");
   main.className = "reader size-m reader-root";
-
-  const backTop = document.createElement("button");
-  backTop.id = "back";
-  backTop.textContent = "← Back";
-  backTop.onclick = () => navigate("/");
-  main.appendChild(backTop);
 
   const pageSections = [];
   for (const page of state.currentBook.pages) {
@@ -560,15 +648,56 @@ function renderReader() {
     main.appendChild(section);
   }
 
-  const backBottom = document.createElement("button");
-  backBottom.id = "back-bottom";
-  backBottom.textContent = "← Back";
-  backBottom.onclick = () => navigate("/");
-  main.appendChild(backBottom);
-
   main.addEventListener("click", onWordTap);
 
   root.appendChild(main);
+
+  // --- scroll listener: auto-hide header + progress-bar update ---
+  // Tear down any listener from a previous render before attaching a new
+  // one (defensive — currentBook changes re-run renderReader()).
+  teardownReaderScroll();
+  _readerLastScrollY = window.scrollY || 0;
+
+  const totalPages =
+    (state.currentBook && state.currentBook.totalPages) ||
+    state.currentBook.pages.length ||
+    1;
+
+  const runScrollTick = () => {
+    _readerScrollRafId = 0;
+    const hdr = document.querySelector(".reader-header");
+    if (!hdr) return;
+    const y = window.scrollY || 0;
+    const delta = y - _readerLastScrollY;
+    // Auto-hide: only engage below the 100 px threshold. Above it we always
+    // keep the header visible so the reader doesn't flicker at the top.
+    if (y > 100 && delta > 0) {
+      hdr.classList.add("hidden");
+    } else if (delta < 0) {
+      hdr.classList.remove("hidden");
+    }
+    _readerLastScrollY = y;
+
+    // Progress bar — spec uses (currentPageIndex + 1) / totalPages.
+    const idx = findVisiblePageIndex();
+    const percent = Math.max(
+      0,
+      Math.min(100, Math.round(((idx + 1) / totalPages) * 100)),
+    );
+    const fill = hdr.querySelector(".progress-fill");
+    if (fill) fill.style.width = `${percent}%`;
+  };
+
+  _readerScrollHandler = () => {
+    // Throttle via requestAnimationFrame — a single tick per frame, which
+    // is plenty for a 60Hz scroll and avoids jank from layout reads.
+    if (_readerScrollRafId) return;
+    _readerScrollRafId = requestAnimationFrame(runScrollTick);
+  };
+  window.addEventListener("scroll", _readerScrollHandler, { passive: true });
+
+  // Prime the progress bar so it reflects the initially-visible page.
+  runScrollTick();
 
   // Apply auto-translations post-render. Pass 1: per-page auto_unit_ids
   // (Units whose lemma matched the server-side dictionary).
