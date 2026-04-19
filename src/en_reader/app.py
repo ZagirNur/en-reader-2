@@ -35,3 +35,11 @@ def api_demo() -> dict:
         )
     with demo_path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str) -> FileResponse:
+    """Serve index.html for SPA deep links; let /api/* and /static/* 404 normally."""
+    if full_path.startswith("api/") or full_path.startswith("static/"):
+        raise HTTPException(status_code=404)
+    return FileResponse(_STATIC_DIR / "index.html")
