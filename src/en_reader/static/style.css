@@ -67,3 +67,39 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 @media (max-width: 480px) {
   .reader { padding: 1rem 1.25rem 3rem; }
 }
+
+.word.loading { opacity: 0.45; pointer-events: none; }
+
+.toast {
+  position: fixed; top: 1rem; left: 50%; transform: translateX(-50%) translateY(-20px);
+  background: var(--ink); color: var(--bg);
+  padding: 0.5rem 1rem; border-radius: 6px;
+  font-size: 14px; font-weight: 500;
+  opacity: 0; transition: opacity 0.2s, transform 0.2s;
+  z-index: 1000; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.sheet-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  z-index: 900;
+}
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  background: var(--card); color: var(--ink);
+  border-top-left-radius: 16px; border-top-right-radius: 16px;
+  padding: 1.5rem 1.25rem 2rem;
+  box-shadow: 0 -8px 24px rgba(0,0,0,0.15);
+  z-index: 901; max-height: 80vh; overflow-y: auto;
+}
+.sheet-headword { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; }
+.sheet-meta { font-size: 13px; color: var(--ink-2); font-style: italic; margin: 0.25rem 0 1rem; }
+.sheet-card { background: var(--soft); border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+.sheet-translation { font-size: 17px; font-weight: 500; }
+.sheet-from-book .uplabel { margin-bottom: 6px; }
+.sheet-from-book-text { font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.sheet-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+.btn { border: none; border-radius: 8px; padding: 0.6rem 1rem; font: inherit; cursor: pointer; }
+.btn.primary { background: var(--ink); color: var(--bg); }
+.btn.ghost { background: var(--bg-2); color: var(--ink); }
+.btn:disabled { opacity: 0.7; cursor: default; }

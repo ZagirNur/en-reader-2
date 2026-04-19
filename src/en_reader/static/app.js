@@ -1,8 +1,14 @@
-// en-reader SPA (M3.3): state + router + reader render (tokens → translatable spans).
-// XSS discipline: token text goes via document.createTextNode / textContent only.
+// en-reader SPA (M3.3 + M4.2): state + router + reader render + inline translation.
+// XSS discipline: any text from API responses goes via document.createTextNode / textContent only.
 
 // --- state ---
-const state = { view: "loading", error: null, route: "/", demo: null };
+const state = {
+  view: "loading",
+  error: null,
+  route: "/",
+  demo: null,
+  userDict: {},
+};
 
 function setState(patch) {
   Object.assign(state, patch);
@@ -39,6 +45,16 @@ async function apiGet(path) {
   return res.json();
 }
 
+async function apiPost(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
 // --- views ---
 function renderLibrary() {
   const root = document.getElementById("root");
@@ -46,6 +62,7 @@ function renderLibrary() {
   document.getElementById("open-demo").onclick = () => navigate("/reader");
 }
 
+// --- reader render ---
 function buildPageSection(page) {
   const section = document.createElement("section");
   section.className = "page";
@@ -73,15 +90,35 @@ function buildPageSection(page) {
   let para = document.createElement("p");
   body.appendChild(para);
 
+  // Sentence wrapper: opened when is_sent_start (or on first token).
+  let sent = null;
+  let sentCounter = 0;
+
+  const openSentence = () => {
+    sent = document.createElement("span");
+    sent.className = "sentence";
+    sent.dataset.sentenceId = `page-${page.page_index}-sent-${sentCounter++}`;
+    para.appendChild(sent);
+  };
+
+  // Literal gap text; \n\n+ starts a new <p>; sentence wrapper continues.
   const appendGap = (gap) => {
     if (!gap) return;
-    // split on double-newline to start a new <p>; single \n collapses.
     const parts = gap.split(/\n\n+/);
     for (let k = 0; k < parts.length; k++) {
-      if (parts[k]) para.appendChild(document.createTextNode(parts[k]));
+      if (parts[k]) {
+        const target = sent || para;
+        target.appendChild(document.createTextNode(parts[k]));
+      }
       if (k < parts.length - 1) {
         para = document.createElement("p");
         body.appendChild(para);
+        if (sent) {
+          sent = document.createElement("span");
+          sent.className = "sentence";
+          sent.dataset.sentenceId = `page-${page.page_index}-sent-${sentCounter - 1}-cont`;
+          para.appendChild(sent);
+        }
       }
     }
   };
@@ -91,8 +128,13 @@ function buildPageSection(page) {
     const tok = tokens[i];
     const unit = unitByToken.get(i);
 
+    // Open a new sentence wrapper at the sentence boundary.
+    if (tok.is_sent_start || sent === null) {
+      openSentence();
+    }
+
     if (unit && unit.token_ids[0] === i) {
-      // MWE / phrasal / split_phrasal / word unit: one span spanning all unit tokens.
+      // MWE / phrasal / split_phrasal / word unit: one span per unit.
       const span = document.createElement("span");
       span.className = "word";
       span.dataset.unitId = String(unit.id);
@@ -111,7 +153,7 @@ function buildPageSection(page) {
         }
       }
       span.textContent = spanText;
-      para.appendChild(span);
+      sent.appendChild(span);
 
       const lastId = ids[ids.length - 1];
       const lastTok = tokens[lastId];
@@ -130,12 +172,11 @@ function buildPageSection(page) {
       span.dataset.lemma = tok.lemma;
       span.dataset.kind = "word";
       span.textContent = tok.text;
-      para.appendChild(span);
+      sent.appendChild(span);
     } else if (!unit) {
-      para.appendChild(document.createTextNode(tok.text));
-    } else {
-      // Token inside a unit but not the first — already emitted.
+      sent.appendChild(document.createTextNode(tok.text));
     }
+    // else: token inside a multi-token unit — already emitted.
 
     const nextTok = tokens[i + 1];
     const gap = nextTok
@@ -180,11 +221,7 @@ function renderReader() {
   backBottom.onclick = () => navigate("/");
   main.appendChild(backBottom);
 
-  main.addEventListener("click", (e) => {
-    const span = e.target.closest(".word");
-    if (!span) return;
-    console.log("clicked", span.dataset.unitId, span.dataset.lemma, span.textContent);
-  });
+  main.addEventListener("click", onWordTap);
 
   root.appendChild(main);
 }
@@ -210,6 +247,229 @@ function renderError() {
   };
   p.appendChild(link);
   root.append(box, p);
+}
+
+// --- inline translation (M4.2) ---
+function getSentenceFor(span) {
+  const sentEl = span.closest("[data-sentence-id]");
+  if (sentEl) return sentEl.textContent;
+  const page = span.closest(".page-body");
+  return page ? page.textContent.slice(0, 300) : "";
+}
+
+async function onWordTap(e) {
+  const span = e.target.closest(".word");
+  if (!span) return;
+  if (span.classList.contains("translated")) {
+    openWordSheet(span);
+    return;
+  }
+  await translateAndReplace(span);
+}
+
+async function translateAndReplace(span) {
+  if (span.classList.contains("loading")) return;
+  const lemma = span.dataset.lemma;
+  const pairId = span.dataset.pairId;
+  const unitText = span.textContent.trim();
+  const sentence = getSentenceFor(span);
+
+  span.classList.add("loading");
+
+  let ru;
+  try {
+    const r = await apiPost("/api/translate", { unit_text: unitText, sentence });
+    ru = r.ru;
+  } catch (err) {
+    span.classList.remove("loading");
+    toast("Не удалось перевести");
+    return;
+  }
+
+  withScrollAnchor(() => {
+    state.userDict[lemma] = ru;
+
+    const lemmaSel = `.word[data-lemma="${CSS.escape(lemma)}"]`;
+    document.querySelectorAll(lemmaSel).forEach((w) => {
+      replaceWithTranslation(w, ru);
+    });
+    if (pairId != null) {
+      const pairSel = `.word[data-pair-id="${CSS.escape(pairId)}"]`;
+      document.querySelectorAll(pairSel).forEach((w) => {
+        if (!w.classList.contains("translated")) replaceWithTranslation(w, ru);
+      });
+    }
+
+    span.classList.add("highlighted");
+    setTimeout(() => span.classList.remove("highlighted"), 800);
+  });
+
+  toast("В словарь ✓");
+}
+
+function replaceWithTranslation(span, ru) {
+  if (!("originalText" in span.dataset)) {
+    span.dataset.originalText = span.textContent;
+  }
+  span.textContent = ru;
+  span.classList.remove("loading");
+  span.classList.add("translated");
+}
+
+function revertTranslation(lemma) {
+  // Primary pass: restore all spans with this data-lemma.
+  const lemmaSel = `.word.translated[data-lemma="${CSS.escape(lemma)}"]`;
+  const reverted = new Set();
+  document.querySelectorAll(lemmaSel).forEach((w) => {
+    if (w.dataset.originalText != null) {
+      w.textContent = w.dataset.originalText;
+      delete w.dataset.originalText;
+    }
+    w.classList.remove("translated");
+    if (w.dataset.pairId != null) reverted.add(w.dataset.pairId);
+  });
+
+  // Secondary pass: restore any paired halves that were translated via pair_id.
+  for (const pid of reverted) {
+    const pairSel = `.word.translated[data-pair-id="${CSS.escape(pid)}"]`;
+    document.querySelectorAll(pairSel).forEach((w) => {
+      if (w.dataset.originalText != null) {
+        w.textContent = w.dataset.originalText;
+        delete w.dataset.originalText;
+      }
+      w.classList.remove("translated");
+    });
+  }
+
+  delete state.userDict[lemma];
+}
+
+// --- bottom sheet (M4.2 minimal; M16.2 later) ---
+function closeSheet() {
+  document.querySelectorAll(".sheet-backdrop, .sheet").forEach((n) => n.remove());
+  document.removeEventListener("keydown", onSheetKeydown);
+}
+
+function onSheetKeydown(e) {
+  if (e.key === "Escape") closeSheet();
+}
+
+function openWordSheet(span) {
+  closeSheet(); // ensure only one open at a time
+
+  const lemma = span.dataset.lemma;
+  const original = span.dataset.originalText ?? span.textContent;
+  const ruText = span.textContent;
+  const sentenceText = getSentenceFor(span);
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "sheet-backdrop";
+  backdrop.addEventListener("click", closeSheet);
+
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+  sheet.setAttribute("role", "dialog");
+
+  const headword = document.createElement("div");
+  headword.className = "sheet-headword";
+  headword.textContent = original;
+  sheet.appendChild(headword);
+
+  const meta = document.createElement("div");
+  meta.className = "sheet-meta";
+  meta.textContent = "— · —";
+  sheet.appendChild(meta);
+
+  const tCard = document.createElement("div");
+  tCard.className = "sheet-card sheet-translation";
+  tCard.textContent = ruText;
+  sheet.appendChild(tCard);
+
+  // "Из книги" section — sentence with the RU translation wrapped in <b>.
+  const fromBook = document.createElement("div");
+  fromBook.className = "sheet-from-book";
+  const uplabel = document.createElement("div");
+  uplabel.className = "uplabel";
+  uplabel.textContent = "Из книги";
+  fromBook.appendChild(uplabel);
+
+  const sentWrap = document.createElement("div");
+  sentWrap.className = "sheet-from-book-text";
+  // Sentence text already contains the RU word (it was replaced in the DOM).
+  // Highlight the first occurrence by splitting on the RU string.
+  const idx = ruText ? sentenceText.indexOf(ruText) : -1;
+  if (idx >= 0 && ruText) {
+    sentWrap.appendChild(document.createTextNode(sentenceText.slice(0, idx)));
+    const b = document.createElement("b");
+    b.setAttribute("style", "color:var(--accent)");
+    b.textContent = ruText;
+    sentWrap.appendChild(b);
+    sentWrap.appendChild(
+      document.createTextNode(sentenceText.slice(idx + ruText.length)),
+    );
+  } else {
+    sentWrap.textContent = sentenceText;
+  }
+  fromBook.appendChild(sentWrap);
+  sheet.appendChild(fromBook);
+
+  const actions = document.createElement("div");
+  actions.className = "sheet-actions";
+  const primary = document.createElement("button");
+  primary.className = "btn primary";
+  primary.textContent = "✓ В словаре";
+  primary.disabled = true;
+  const ghost = document.createElement("button");
+  ghost.className = "btn ghost";
+  ghost.textContent = "Оригинал";
+  ghost.addEventListener("click", () => {
+    revertTranslation(lemma);
+    closeSheet();
+    toast("Вернули оригинал");
+  });
+  actions.appendChild(primary);
+  actions.appendChild(ghost);
+  sheet.appendChild(actions);
+
+  document.body.appendChild(backdrop);
+  document.body.appendChild(sheet);
+  document.addEventListener("keydown", onSheetKeydown);
+}
+
+// --- helpers (M4.2) ---
+function withScrollAnchor(mutateSync) {
+  const pages = document.querySelectorAll(".page");
+  let anchor = null;
+  const mid = window.innerHeight / 2;
+  for (const p of pages) {
+    const top = p.getBoundingClientRect().top;
+    if (top >= 0 || top < mid) {
+      anchor = p;
+      break;
+    }
+  }
+  if (!anchor) anchor = document.querySelector(".page");
+  if (!anchor) {
+    mutateSync();
+    return;
+  }
+  const topBefore = anchor.getBoundingClientRect().top;
+  mutateSync();
+  const topAfter = anchor.getBoundingClientRect().top;
+  window.scrollBy(0, topAfter - topBefore);
+}
+
+function toast(message) {
+  document.querySelectorAll(".toast").forEach((n) => n.remove());
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = message;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 250);
+  }, 2000);
 }
 
 // --- render ---
