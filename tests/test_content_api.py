@@ -5,7 +5,9 @@ limit cap at 20, the 404 path for missing books, and the
 ``auto_unit_ids`` enrichment tied to the user dictionary.
 
 All tests rely on the autouse ``tmp_db`` fixture in ``conftest.py`` for a
-fresh per-test SQLite file.
+fresh per-test SQLite file, plus the shared ``client`` fixture (M11.3)
+which signs up the fixture user that ``scripts.seed.main(..., email=...)``
+attaches the seeded books to.
 """
 
 from __future__ import annotations
@@ -14,8 +16,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from en_reader import storage
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 # Small fixture — 05-complex has 2 pages with real tokens; used for shape +
 # 404 + cover assertions. The phrasal fixture is the one with real Units
@@ -28,21 +30,21 @@ _BIG_FIXTURE = "tests/fixtures/long.txt"
 
 
 @pytest.fixture()
-def small_client() -> TestClient:
-    seed_main(_SMALL_FIXTURE, images_dir="tests/fixtures/demo-images")
-    return TestClient(app)
+def small_client(client: TestClient) -> TestClient:
+    seed_main(_SMALL_FIXTURE, images_dir="tests/fixtures/demo-images", email=FIXTURE_EMAIL)
+    return client
 
 
 @pytest.fixture()
-def units_client() -> TestClient:
-    seed_main(_UNITS_FIXTURE)
-    return TestClient(app)
+def units_client(client: TestClient) -> TestClient:
+    seed_main(_UNITS_FIXTURE, email=FIXTURE_EMAIL)
+    return client
 
 
 @pytest.fixture()
-def big_client() -> TestClient:
-    seed_main(_BIG_FIXTURE)
-    return TestClient(app)
+def big_client(client: TestClient) -> TestClient:
+    seed_main(_BIG_FIXTURE, email=FIXTURE_EMAIL)
+    return client
 
 
 # ---------- shape ----------
@@ -124,7 +126,11 @@ def test_content_auto_unit_ids_from_dict(units_client: TestClient) -> None:
     # Before the dict entry, auto_unit_ids is empty.
     assert pages[0]["auto_unit_ids"] == []
 
-    storage.dict_add(target_lemma, "тест-перевод")
+    # The seeded book belongs to the fixture user (id=2) since the
+    # conftest signup is the second row after the migration placeholder.
+    fixture_user = storage.user_by_email(FIXTURE_EMAIL)
+    assert fixture_user is not None
+    storage.dict_add(target_lemma, "тест-перевод", user_id=fixture_user.id)
     resp = units_client.get("/api/books/1/content")
     assert resp.status_code == 200
     body = resp.json()

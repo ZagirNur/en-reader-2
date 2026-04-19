@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 _FIXTURE = "tests/fixtures/golden/02-phrasal.txt"
 
@@ -25,9 +25,9 @@ _STATIC_DIR = Path(__file__).resolve().parent.parent / "src" / "en_reader" / "st
 
 
 @pytest.fixture()
-def client() -> TestClient:
-    seed_main(_FIXTURE)
-    return TestClient(app)
+def seeded_client(client: TestClient) -> TestClient:
+    seed_main(_FIXTURE, email=FIXTURE_EMAIL)
+    return client
 
 
 # ---------- static bundle checks ----------
@@ -69,8 +69,8 @@ def test_style_css_has_sheet_and_toast_rules() -> None:
 # ---------- demo + endpoint sanity ----------
 
 
-def test_demo_split_phrasal_has_shared_pair_id(client: TestClient) -> None:
-    resp = client.get("/api/books/1/content?offset=0&limit=20")
+def test_demo_split_phrasal_has_shared_pair_id(seeded_client: TestClient) -> None:
+    resp = seeded_client.get("/api/books/1/content?offset=0&limit=20")
     assert resp.status_code == 200
     body = resp.json()
 
@@ -93,14 +93,15 @@ def test_demo_split_phrasal_has_shared_pair_id(client: TestClient) -> None:
     assert found, "expected at least one split_phrasal pair with a shared non-null pair_id"
 
 
-def test_translate_endpoint_success_for_m4_2(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_translate_endpoint_success_for_m4_2(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Mirror the pattern from tests/test_translate.py — patch the symbol
     # imported into app.py so the endpoint returns cleanly without Gemini.
     def _fake(unit_text: str, sentence: str) -> str:
         return "зловещий"
 
     monkeypatch.setattr("en_reader.app.translate_one", _fake)
-    client = TestClient(app)
     resp = client.post(
         "/api/translate",
         json={

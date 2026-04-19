@@ -9,7 +9,9 @@ Covers:
   `auto_unit_ids`.
 
 All LLM calls are monkeypatched — no network hits. The ``tmp_db``
-autouse fixture in ``conftest.py`` gives each test its own SQLite file.
+autouse fixture in ``conftest.py`` gives each test its own SQLite file,
+and the ``client`` fixture signs up the fixture user that every
+seed/dict call attaches data to.
 """
 
 from __future__ import annotations
@@ -18,8 +20,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from en_reader import storage
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 _FIXTURE = "tests/fixtures/golden/02-phrasal.txt"
 
@@ -35,22 +37,27 @@ def fake_translate(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def demo_client() -> TestClient:
-    """TestClient with the phrasal fixture seeded into the per-test DB.
+def demo_client(client: TestClient) -> TestClient:
+    """Authenticated client with the phrasal fixture seeded under the fixture user.
 
     Function-scoped so it composes with the autouse ``tmp_db`` fixture,
     which is itself function-scoped.
     """
-    seed_main(_FIXTURE)
-    return TestClient(app)
+    seed_main(_FIXTURE, email=FIXTURE_EMAIL)
+    return client
+
+
+def _fixture_user_id() -> int:
+    user = storage.user_by_email(FIXTURE_EMAIL)
+    assert user is not None, "client fixture must have created the user"
+    return user.id
 
 
 # ---------- translate -> dictionary wiring ----------
 
 
-def test_translate_populates_dictionary(fake_translate: None) -> None:
-    c = TestClient(app)
-    resp = c.post(
+def test_translate_populates_dictionary(client: TestClient, fake_translate: None) -> None:
+    resp = client.post(
         "/api/translate",
         json={
             "unit_text": "ominous",
@@ -61,23 +68,21 @@ def test_translate_populates_dictionary(fake_translate: None) -> None:
     assert resp.status_code == 200
     assert resp.json() == {"ru": "зловещий"}
 
-    got = c.get("/api/dictionary")
+    got = client.get("/api/dictionary")
     assert got.status_code == 200
     assert got.json() == {"ominous": "зловещий"}
 
 
-def test_missing_lemma_rejected() -> None:
-    c = TestClient(app)
-    resp = c.post(
+def test_missing_lemma_rejected(client: TestClient) -> None:
+    resp = client.post(
         "/api/translate",
         json={"unit_text": "ominous", "sentence": "She whispered."},
     )
     assert resp.status_code == 422
 
 
-def test_lemma_lowercased(fake_translate: None) -> None:
-    c = TestClient(app)
-    resp = c.post(
+def test_lemma_lowercased(client: TestClient, fake_translate: None) -> None:
+    resp = client.post(
         "/api/translate",
         json={
             "unit_text": "Ominous",
@@ -86,33 +91,30 @@ def test_lemma_lowercased(fake_translate: None) -> None:
         },
     )
     assert resp.status_code == 200
-    assert c.get("/api/dictionary").json() == {"ominous": "зловещий"}
+    assert client.get("/api/dictionary").json() == {"ominous": "зловещий"}
 
 
 # ---------- DELETE ----------
 
 
-def test_delete_dictionary() -> None:
-    storage.dict_add("ominous", "зловещий")
-    c = TestClient(app)
-    resp = c.delete("/api/dictionary/ominous")
+def test_delete_dictionary(client: TestClient) -> None:
+    storage.dict_add("ominous", "зловещий", user_id=_fixture_user_id())
+    resp = client.delete("/api/dictionary/ominous")
     assert resp.status_code == 204
-    assert c.get("/api/dictionary").json() == {}
+    assert client.get("/api/dictionary").json() == {}
 
 
-def test_delete_is_idempotent() -> None:
-    c = TestClient(app)
+def test_delete_is_idempotent(client: TestClient) -> None:
     # Nonexistent key still returns 204.
-    resp = c.delete("/api/dictionary/does-not-exist")
+    resp = client.delete("/api/dictionary/does-not-exist")
     assert resp.status_code == 204
 
 
-def test_delete_is_case_insensitive() -> None:
-    storage.dict_add("ominous", "зловещий")
-    c = TestClient(app)
-    resp = c.delete("/api/dictionary/Ominous")
+def test_delete_is_case_insensitive(client: TestClient) -> None:
+    storage.dict_add("ominous", "зловещий", user_id=_fixture_user_id())
+    resp = client.delete("/api/dictionary/Ominous")
     assert resp.status_code == 204
-    assert c.get("/api/dictionary").json() == {}
+    assert client.get("/api/dictionary").json() == {}
 
 
 # ---------- content enrichment ----------
@@ -140,7 +142,7 @@ def test_content_includes_user_dict_and_auto_unit_ids(demo_client: TestClient) -
             break
     assert target_lemma is not None, "no units with a lemma in the phrasal fixture"
 
-    storage.dict_add(target_lemma, "тест-перевод")
+    storage.dict_add(target_lemma, "тест-перевод", user_id=_fixture_user_id())
 
     body = demo_client.get("/api/books/1/content?offset=0&limit=20").json()
     assert body["user_dict"] == {target_lemma: "тест-перевод"}

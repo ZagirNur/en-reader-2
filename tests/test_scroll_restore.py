@@ -26,15 +26,14 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 _FIXTURE = "tests/fixtures/golden/05-complex.txt"
 
 
-def test_app_js_contains_scroll_restore_markers() -> None:
+def test_app_js_contains_scroll_restore_markers(client: TestClient) -> None:
     """app.js must ship the M10.2 helpers + state fields the spec names."""
-    client = TestClient(app)
     resp = client.get("/static/app.js")
     assert resp.status_code == 200
     js = resp.text
@@ -50,10 +49,9 @@ def test_app_js_contains_scroll_restore_markers() -> None:
         assert marker in js, f"expected {marker!r} in app.js"
 
 
-def test_content_offset_zero_returns_saved_progress() -> None:
+def test_content_offset_zero_returns_saved_progress(client: TestClient) -> None:
     """First-phase fetch (offset=0&limit=1) must surface last_page_offset."""
-    book_id = seed_main(_FIXTURE)
-    client = TestClient(app)
+    book_id = seed_main(_FIXTURE, email=FIXTURE_EMAIL)
     post = client.post(
         f"/api/books/{book_id}/progress",
         json={"last_page_index": 0, "last_page_offset": 0.42},

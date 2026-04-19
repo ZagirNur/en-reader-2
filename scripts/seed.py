@@ -5,6 +5,12 @@ Replaces the older ``scripts/build_demo.py`` — instead of emitting a static
 ``pages`` row per page. Served to the frontend via
 ``GET /api/books/{id}/content`` (M8.2).
 
+M11.3: the book can be attached to an arbitrary user via ``--email``. If the
+email maps to an existing user their id is used; otherwise a new account is
+created with a default password (printed to stdout once). Without ``--email``
+the seed still targets the migration-seeded ``seed@local`` row
+(:data:`storage.SEED_USER_ID`), preserving the CLI's pre-M11 behaviour.
+
 Usage::
 
     python scripts/seed.py tests/fixtures/golden/05-complex.txt
@@ -12,6 +18,8 @@ Usage::
         --images-dir tests/fixtures/demo-images
     python scripts/seed.py tests/fixtures/golden/05-complex.txt \\
         --title "Complex Demo"
+    python scripts/seed.py tests/fixtures/golden/05-complex.txt \\
+        --email alice@example.com
 """
 
 from __future__ import annotations
@@ -22,10 +30,13 @@ from pathlib import Path
 from typing import Optional
 
 from en_reader import storage
+from en_reader.auth import hash_password, normalize_email
 from en_reader.images import marker_for, new_image_id
 from en_reader.parsers import ParsedBook, ParsedImage
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+
+_DEFAULT_PASSWORD = "changeme123"
 
 _MIME_BY_EXT: dict[str, str] = {
     ".png": "image/png",
@@ -94,18 +105,45 @@ def _inject_markers(raw_text: str, image_ids: list[str]) -> str:
     return "\n\n".join(out_parts)
 
 
+def _resolve_user_id(email: Optional[str]) -> int:
+    """Return the user id for ``email`` (creating the row on first use).
+
+    If ``email`` is ``None`` we fall back to :data:`storage.SEED_USER_ID`
+    — the migration-seeded ``seed@local`` row that legacy content already
+    hangs off of. With an explicit email we first look up the user; if
+    they don't exist we mint a fresh account with :data:`_DEFAULT_PASSWORD`
+    and print the password to stdout so the operator can log in.
+    """
+    if email is None:
+        return storage.SEED_USER_ID
+    normalized = normalize_email(email)
+    existing = storage.user_by_email(normalized)
+    if existing is not None:
+        return existing.id
+    user_id = storage.user_create(normalized, hash_password(_DEFAULT_PASSWORD))
+    print(
+        f"seed: created user {normalized} (id={user_id}) "
+        f"with default password: {_DEFAULT_PASSWORD}",
+    )
+    return user_id
+
+
 def main(
     txt_path: str | Path,
     images_dir: Optional[str | Path] = None,
     title: Optional[str] = None,
+    *,
+    email: Optional[str] = None,
 ) -> int:
     """Seed one book from a .txt fixture and return its ``book_id``.
 
-    Programmatic entrypoint for tests. Ensures migrations are applied before
-    the insert, so callers don't need to remember to call ``storage.migrate``
-    first.
+    Programmatic entrypoint for tests. Ensures migrations are applied
+    before the insert, so callers don't need to remember to call
+    ``storage.migrate`` first. ``email`` targets a specific user (created
+    on first use); without it we use the migration-seeded user id.
     """
     storage.migrate()
+    user_id = _resolve_user_id(email)
 
     input_path = _resolve_input(txt_path)
     raw_bytes = input_path.read_bytes()
@@ -131,7 +169,7 @@ def main(
         cover=None,
     )
 
-    return storage.book_save(parsed)
+    return storage.book_save(parsed, user_id=user_id)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -147,18 +185,33 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Override the book title (defaults to the filename stem, title-cased).",
     )
+    parser.add_argument(
+        "--email",
+        default=None,
+        help=(
+            "Owner's email. Creates the account with a default password "
+            "(printed to stdout) when the email is new. Defaults to the "
+            "migration-seeded seed@local user."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(
-            "Usage: python scripts/seed.py <path-to-txt> [--images-dir DIR] [--title T]",
+            "Usage: python scripts/seed.py <path-to-txt> "
+            "[--images-dir DIR] [--title T] [--email E]",
             file=sys.stderr,
         )
         sys.exit(2)
     args = _parse_args(sys.argv[1:])
-    book_id = main(args.path, images_dir=args.images_dir, title=args.title)
+    book_id = main(
+        args.path,
+        images_dir=args.images_dir,
+        title=args.title,
+        email=args.email,
+    )
     meta = storage.book_meta(book_id)
     total_pages = meta.total_pages if meta else 0
     print(f"book_id={book_id} total_pages={total_pages}")

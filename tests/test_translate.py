@@ -3,7 +3,9 @@
 All Gemini calls are stubbed via ``monkeypatch`` — no network access.
 ``_sleep`` is replaced with a no-op so retry paths don't add wall time.
 ``_client`` is reset before each test so lazy-init state from a previous
-test cannot leak in.
+test cannot leak in. M11.3 put ``/api/translate`` behind
+``Depends(get_current_user)``, so the endpoint tests go through the
+shared authenticated ``client`` fixture.
 """
 
 from __future__ import annotations
@@ -107,9 +109,8 @@ def test_translate_one_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------- endpoint tests ----------
 
 
-def test_translate_endpoint_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_translate_endpoint_success(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_client(monkeypatch, ["зловещий"])
-    client = TestClient(app)
     resp = client.post(
         "/api/translate",
         json={
@@ -123,14 +124,13 @@ def test_translate_endpoint_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_translate_endpoint_502_on_TranslateError(
-    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def _boom(unit_text: str, sentence: str) -> str:
         raise TranslateError("forced")
 
     # Patch the symbol imported into app.py, not just the translate module.
     monkeypatch.setattr("en_reader.app.translate_one", _boom)
-    client = TestClient(app)
     resp = client.post(
         "/api/translate",
         json={"unit_text": "ominous", "sentence": "She whispered.", "lemma": "ominous"},
@@ -139,10 +139,28 @@ def test_translate_endpoint_502_on_TranslateError(
     assert "forced" in resp.json()["detail"]
 
 
-def test_translate_endpoint_422_on_empty_unit() -> None:
-    client = TestClient(app)
+def test_translate_endpoint_422_on_empty_unit(client: TestClient) -> None:
     resp = client.post(
         "/api/translate",
         json={"unit_text": "", "sentence": "She whispered.", "lemma": "ominous"},
     )
     assert resp.status_code == 422
+
+
+def test_translate_endpoint_401_without_session() -> None:
+    """Baseline for M11.3: the route is behind Depends(get_current_user).
+
+    A raw ``TestClient(app)`` with no signup / no cookie must be locked
+    out — we keep this pinned so a future refactor can't silently drop
+    the auth guard.
+    """
+    c = TestClient(app)
+    resp = c.post(
+        "/api/translate",
+        json={
+            "unit_text": "ominous",
+            "sentence": "She whispered an ominous warning.",
+            "lemma": "ominous",
+        },
+    )
+    assert resp.status_code == 401

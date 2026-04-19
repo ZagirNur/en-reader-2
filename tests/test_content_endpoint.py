@@ -4,7 +4,9 @@ Seeds ``tests/fixtures/golden/01-simple.txt`` into the per-test SQLite DB
 (autouse ``tmp_db`` fixture in ``conftest.py``) and exercises the routes
 via ``fastapi.testclient.TestClient``. M8.1 dropped the static
 ``demo.json`` handoff and M8.2 introduced
-``GET /api/books/{id}/content`` as the paginated reader feed.
+``GET /api/books/{id}/content`` as the paginated reader feed. M11.3
+attached auth to every ``/api/*`` route, so tests here reuse the shared
+``client`` fixture + ``seed_main(..., email=FIXTURE_EMAIL)`` pairing.
 """
 
 from __future__ import annotations
@@ -12,20 +14,20 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 _FIXTURE = "tests/fixtures/golden/01-simple.txt"
 
 
 @pytest.fixture()
-def client() -> TestClient:
-    seed_main(_FIXTURE)
-    return TestClient(app)
+def seeded_client(client: TestClient) -> TestClient:
+    seed_main(_FIXTURE, email=FIXTURE_EMAIL)
+    return client
 
 
-def test_api_content_returns_valid_payload(client: TestClient) -> None:
-    resp = client.get("/api/books/1/content?offset=0&limit=20")
+def test_api_content_returns_valid_payload(seeded_client: TestClient) -> None:
+    resp = seeded_client.get("/api/books/1/content?offset=0&limit=20")
     assert resp.status_code == 200
     body = resp.json()
 
@@ -37,14 +39,14 @@ def test_api_content_returns_valid_payload(client: TestClient) -> None:
     assert len(body["pages"]) <= body["total_pages"]
 
 
-def test_root_returns_html_stub(client: TestClient) -> None:
-    resp = client.get("/")
+def test_root_returns_html_stub(seeded_client: TestClient) -> None:
+    resp = seeded_client.get("/")
     assert resp.status_code == 200
     assert '<div id="root">' in resp.text
 
 
-def test_content_pages_have_required_keys(client: TestClient) -> None:
-    resp = client.get("/api/books/1/content?offset=0&limit=20")
+def test_content_pages_have_required_keys(seeded_client: TestClient) -> None:
+    resp = seeded_client.get("/api/books/1/content?offset=0&limit=20")
     assert resp.status_code == 200
     pages = resp.json()["pages"]
 
@@ -53,8 +55,9 @@ def test_content_pages_have_required_keys(client: TestClient) -> None:
         assert required.issubset(page.keys()), f"missing keys: {required - page.keys()}"
 
 
-def test_api_content_404_when_book_missing() -> None:
-    # No seeding in this test — the autouse tmp_db gives a fresh empty DB.
-    c = TestClient(app)
-    resp = c.get("/api/books/1/content")
+def test_api_content_404_when_book_missing(client: TestClient) -> None:
+    # No seeding in this test — the autouse tmp_db gives a fresh empty DB,
+    # and the shared ``client`` fixture already carries an authenticated
+    # session so we exercise the 404 path (not the 401 guard).
+    resp = client.get("/api/books/1/content")
     assert resp.status_code == 404

@@ -21,8 +21,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from en_reader import storage
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 _FIXTURE = "tests/fixtures/long.txt"
 _APP_JS = Path(__file__).resolve().parent.parent / "src" / "en_reader" / "static" / "app.js"
@@ -76,15 +76,16 @@ def test_schedule_progress_save_clears_timer_before_early_return() -> None:
     )
 
 
-def test_post_progress_roundtrips_to_storage() -> None:
+def test_post_progress_roundtrips_to_storage(client: TestClient) -> None:
     """POST /progress with (8, 0.4) → 204 and storage reflects it."""
-    book_id = seed_main(_FIXTURE)
-    client = TestClient(app)
+    book_id = seed_main(_FIXTURE, email=FIXTURE_EMAIL)
     resp = client.post(
         f"/api/books/{book_id}/progress",
         json={"last_page_index": 8, "last_page_offset": 0.4},
     )
     assert resp.status_code == 204
-    page_idx, offset = storage.progress_get(book_id)
+    user = storage.user_by_email(FIXTURE_EMAIL)
+    assert user is not None
+    page_idx, offset = storage.progress_get(book_id, user_id=user.id)
     assert page_idx == 8
     assert abs(offset - 0.4) < 1e-9

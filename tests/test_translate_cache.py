@@ -7,7 +7,9 @@ asserting its call count across sequences of POSTs and DELETEs. They
 also verify the `hit`/`miss` counters and the INFO-level log lines.
 
 The `tmp_db` autouse fixture from `tests/conftest.py` gives each test a
-fresh SQLite file; a local autouse fixture here zeros the module-level
+fresh SQLite file, and the shared ``client`` fixture signs up a fixture
+user before any `/api/translate` call (the endpoint is auth-guarded
+since M11.3). A local autouse fixture here zeros the module-level
 ``counters`` so values don't leak between tests.
 """
 
@@ -20,8 +22,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from en_reader import storage
-from en_reader.app import app
 from en_reader.metrics import counters
+from tests.conftest import FIXTURE_EMAIL
 
 
 @pytest.fixture(autouse=True)
@@ -45,23 +47,21 @@ def _payload(lemma: str = "ominous") -> dict[str, str]:
 # ---------- cache short-circuit ----------
 
 
-def test_first_call_invokes_llm() -> None:
+def test_first_call_invokes_llm(client: TestClient) -> None:
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        c = TestClient(app)
-        resp = c.post("/api/translate", json=_payload())
+        resp = client.post("/api/translate", json=_payload())
         assert resp.status_code == 200
         assert resp.json() == {"ru": "зловещий"}
         mock.assert_called_once()
 
 
-def test_second_call_skips_llm() -> None:
+def test_second_call_skips_llm(client: TestClient) -> None:
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        c = TestClient(app)
-        first = c.post("/api/translate", json=_payload())
+        first = client.post("/api/translate", json=_payload())
         assert first.status_code == 200
-        second = c.post("/api/translate", json=_payload())
+        second = client.post("/api/translate", json=_payload())
         assert second.status_code == 200
         assert second.json() == {"ru": "зловещий"}
         # Still only one LLM invocation after the second request.
@@ -69,15 +69,14 @@ def test_second_call_skips_llm() -> None:
         assert mock.call_count == 1
 
 
-def test_delete_then_call_invokes_llm_again() -> None:
+def test_delete_then_call_invokes_llm_again(client: TestClient) -> None:
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        c = TestClient(app)
-        r1 = c.post("/api/translate", json=_payload())
+        r1 = client.post("/api/translate", json=_payload())
         assert r1.status_code == 200
-        d = c.delete("/api/dictionary/ominous")
+        d = client.delete("/api/dictionary/ominous")
         assert d.status_code == 204
-        r2 = c.post("/api/translate", json=_payload())
+        r2 = client.post("/api/translate", json=_payload())
         assert r2.status_code == 200
         assert mock.call_count == 2
 
@@ -85,12 +84,11 @@ def test_delete_then_call_invokes_llm_again() -> None:
 # ---------- counters ----------
 
 
-def test_hit_increments_counter() -> None:
+def test_hit_increments_counter(client: TestClient) -> None:
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        c = TestClient(app)
-        c.post("/api/translate", json=_payload())
-        c.post("/api/translate", json=_payload())
+        client.post("/api/translate", json=_payload())
+        client.post("/api/translate", json=_payload())
         assert counters.translate_miss == 1
         assert counters.translate_hit == 1
 
@@ -98,27 +96,27 @@ def test_hit_increments_counter() -> None:
 # ---------- persistence on miss ----------
 
 
-def test_miss_calls_llm_and_persists() -> None:
+def test_miss_calls_llm_and_persists(client: TestClient) -> None:
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        c = TestClient(app)
-        resp = c.post("/api/translate", json=_payload())
+        resp = client.post("/api/translate", json=_payload())
         assert resp.status_code == 200
         mock.assert_called_once()
-    # After the miss path, the translation must be in the dictionary.
-    assert storage.dict_get("ominous") == "зловещий"
+    # After the miss path, the translation must be in the fixture user's dict.
+    user = storage.user_by_email(FIXTURE_EMAIL)
+    assert user is not None
+    assert storage.dict_get("ominous", user_id=user.id) == "зловещий"
 
 
 # ---------- logging ----------
 
 
-def test_logs_hit_and_miss(caplog: pytest.LogCaptureFixture) -> None:
+def test_logs_hit_and_miss(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        c = TestClient(app)
         with caplog.at_level(logging.INFO, logger="en_reader.app"):
-            c.post("/api/translate", json=_payload())
-            c.post("/api/translate", json=_payload())
+            client.post("/api/translate", json=_payload())
+            client.post("/api/translate", json=_payload())
 
     messages = [r.getMessage() for r in caplog.records if r.name == "en_reader.app"]
     assert any("MISS" in m and "ominous" in m for m in messages)

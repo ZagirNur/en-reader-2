@@ -22,15 +22,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 _FIXTURE = "tests/fixtures/long.txt"
 
 
-def test_app_js_contains_lazy_sentinel_markers() -> None:
+def test_app_js_contains_lazy_sentinel_markers(client: TestClient) -> None:
     """app.js must ship the M10.3 helpers + identifiers the spec names."""
-    client = TestClient(app)
     resp = client.get("/static/app.js")
     assert resp.status_code == 200
     js = resp.text
@@ -48,18 +47,17 @@ def test_app_js_contains_lazy_sentinel_markers() -> None:
         assert marker in js, f"expected {marker!r} in app.js"
 
 
-def test_style_css_contains_sentinel_rule() -> None:
+def test_style_css_contains_sentinel_rule(client: TestClient) -> None:
     """style.css must ship the .sentinel rule (1 px height)."""
-    client = TestClient(app)
     resp = client.get("/static/style.css")
     assert resp.status_code == 200
     assert ".sentinel" in resp.text
 
 
 @pytest.fixture()
-def seeded_client() -> TestClient:
-    seed_main(_FIXTURE)
-    return TestClient(app)
+def seeded_client(client: TestClient) -> TestClient:
+    seed_main(_FIXTURE, email=FIXTURE_EMAIL)
+    return client
 
 
 def test_content_single_page_fetch_round_trip(seeded_client: TestClient) -> None:

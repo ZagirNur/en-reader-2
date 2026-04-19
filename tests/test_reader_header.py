@@ -10,15 +10,14 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from en_reader.app import app
 from scripts.seed import main as seed_main
+from tests.conftest import FIXTURE_EMAIL
 
 _FIXTURE = "tests/fixtures/golden/05-complex.txt"
 
 
-def test_reader_header_js_markers() -> None:
+def test_reader_header_js_markers(client: TestClient) -> None:
     """app.js must ship the M9.3 header markup hooks and scroll helper."""
-    client = TestClient(app)
     resp = client.get("/static/app.js")
     assert resp.status_code == 200
     js = resp.text
@@ -31,9 +30,8 @@ def test_reader_header_js_markers() -> None:
         assert marker in js, f"expected {marker!r} in app.js"
 
 
-def test_reader_header_css_markers() -> None:
+def test_reader_header_css_markers(client: TestClient) -> None:
     """style.css must ship the M9.3 header + auto-hide rules."""
-    client = TestClient(app)
     resp = client.get("/static/style.css")
     assert resp.status_code == 200
     css = resp.text
@@ -41,10 +39,9 @@ def test_reader_header_css_markers() -> None:
         assert marker in css, f"expected {marker!r} in style.css"
 
 
-def test_content_api_still_works_after_seed() -> None:
+def test_content_api_still_works_after_seed(client: TestClient) -> None:
     """Regression guard: the reader still loads page content as before."""
-    book_id = seed_main(_FIXTURE)
-    client = TestClient(app)
+    book_id = seed_main(_FIXTURE, email=FIXTURE_EMAIL)
     resp = client.get(f"/api/books/{book_id}/content?offset=0&limit=1")
     assert resp.status_code == 200
     body = resp.json()
