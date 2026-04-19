@@ -68,6 +68,13 @@ class ProgressIn(BaseModel):
     last_page_offset: float = Field(ge=0.0, le=1.0)
 
 
+class CurrentBookIn(BaseModel):
+    # Default to None so clients can POST an empty body to clear the pointer
+    # — POSTing {"book_id": null} and {} behave identically. The handler
+    # validates the book id against storage before persisting.
+    book_id: int | None = None
+
+
 @app.get("/")
 def root() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
@@ -250,6 +257,33 @@ def api_get_image(book_id: int, image_id: str) -> Response:
         media_type=mime,
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@app.get("/api/me/current-book")
+def api_get_current_book() -> dict:
+    """Return the user's current-book pointer (M10.5).
+
+    ``{"book_id": null}`` means "no current book — land on the library".
+    Storage lives in the ``meta`` table keyed by ``current_book_id``;
+    M11.1 will migrate this to ``users.current_book_id``.
+    """
+    return {"book_id": storage.current_book_get()}
+
+
+@app.post("/api/me/current-book", status_code=204)
+def api_set_current_book(p: CurrentBookIn) -> Response:
+    """Set or clear the current-book pointer (M10.5).
+
+    ``{"book_id": <id>}`` sets it (404 if the book is unknown), and
+    ``{"book_id": null}`` or an empty body clears it. We validate the
+    book id with ``storage.book_meta`` before writing so a stale client
+    can't park a pointer at a phantom row.
+    """
+    if p.book_id is not None:
+        if not storage.book_meta(p.book_id):
+            raise HTTPException(status_code=404)
+    storage.current_book_set(p.book_id)
+    return Response(status_code=204)
 
 
 @app.get("/{full_path:path}")

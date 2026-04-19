@@ -427,13 +427,59 @@ def book_delete(book_id: int) -> None:
 
     ``pages`` cascades via the FK, but ``book_images`` predates the FK story
     (v1→v2 migration) so we wipe it explicitly. Runs in a single transaction
-    so a partial failure leaves the library consistent.
+    so a partial failure leaves the library consistent. If ``book_id`` is
+    the current-book pointer (M10.5, stored in ``meta``), we clear that
+    pointer inside the same transaction so the library never references a
+    deleted row.
     """
     conn = get_db()
     with conn:
         conn.execute("DELETE FROM book_images WHERE book_id = ?", (book_id,))
         conn.execute("DELETE FROM pages WHERE book_id = ?", (book_id,))
         conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
+        # M10.5: clear current-book pointer if it matched this book. We read
+        # + write inside the same `with conn:` block so the cascade lands
+        # atomically.
+        row = conn.execute("SELECT value FROM meta WHERE key='current_book_id'").fetchone()
+        if row and row["value"] and int(row["value"]) == book_id:
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('current_book_id', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                ("",),
+            )
+
+
+# ---------- current-book DAO (M10.5) ----------
+
+
+def current_book_get() -> int | None:
+    """Return the current-book id from ``meta``, or ``None`` if unset.
+
+    Stored as a string in ``meta.value`` (``""`` meaning "no current book")
+    so we don't have to invent a new sentinel value or a second column.
+    M11.1 will migrate this to ``users.current_book_id``.
+    """
+    conn = get_db()
+    row = conn.execute("SELECT value FROM meta WHERE key='current_book_id'").fetchone()
+    if not row or not row["value"]:
+        return None
+    return int(row["value"])
+
+
+def current_book_set(book_id: int | None) -> None:
+    """UPSERT the current-book pointer. ``None`` clears it.
+
+    Callers: ``POST /api/me/current-book`` and ``book_delete`` (cascade).
+    The UPSERT keeps this idempotent without a separate "exists?" query.
+    """
+    val = "" if book_id is None else str(book_id)
+    conn = get_db()
+    with conn:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('current_book_id', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (val,),
+        )
 
 
 def _row_to_page(row: sqlite3.Row) -> Page:

@@ -856,6 +856,12 @@ function renderReader() {
           targetOffset: lastOff,
           restoring: true,
         });
+        // M10.5: mark this book as the current one so a later visit to `/`
+        // redirects here. Fire-and-forget — a failed POST must not block the
+        // render we just committed above.
+        apiPost("/api/me/current-book", { book_id: meta.book_id }).catch(
+          () => {},
+        );
         return null;
       })
       .catch((err) => setState({ view: "error", error: err.message }));
@@ -873,7 +879,14 @@ function renderReader() {
   backBtn.className = "back-btn";
   backBtn.setAttribute("aria-label", "В библиотеку");
   backBtn.textContent = "←";
-  backBtn.addEventListener("click", () => navigate("/"));
+  // M10.5: explicit "back to library" clears the current-book pointer so a
+  // subsequent visit to `/` lands on the library. We fire-and-forget (best
+  // effort) and navigate regardless of the POST's outcome — a transient
+  // network blip must not trap the reader.
+  backBtn.addEventListener("click", async () => {
+    await apiPost("/api/me/current-book", { book_id: null }).catch(() => {});
+    navigate("/");
+  });
   header.appendChild(backBtn);
 
   const titleEl = document.createElement("div");
@@ -1487,10 +1500,30 @@ function render() {
   if (dark) document.documentElement.classList.add("dark");
 }
 window.addEventListener("popstate", onPopState);
-{
+
+// M10.5: on boot, consult the server for a current-book pointer. If there
+// is one and the user is landing on `/`, redirect straight into the reader
+// so closing and re-opening the tab resumes exactly where they left off.
+// Direct links like `/books/5` always win — we never override an explicit
+// path. A failed `/api/me/current-book` call is treated as "no pointer" so
+// a backend outage still produces a working library view.
+async function bootstrap() {
+  setState({ view: "loading" });
+  let bookId = null;
+  try {
+    const data = await apiGet("/api/me/current-book");
+    if (data && data.book_id != null) bookId = data.book_id;
+  } catch (_e) {
+    // Treat fetch failure as "no current book" — fall through to normal routing.
+  }
+  if (bookId && location.pathname === "/") {
+    navigate(`/books/${bookId}`);
+    return;
+  }
   const path = location.pathname;
   const { view } = parseRoute(path);
   const patch = { route: path, view };
   if (view === "error") patch.error = `Unknown route: ${path}`;
   setState(patch);
 }
+bootstrap();
