@@ -1,0 +1,1272 @@
+{
+  "tokens": [
+    {
+      "text": "When",
+      "lemma": "when",
+      "pos": "SCONJ",
+      "is_sent_start": true,
+      "idx_in_text": 0,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 5,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "lesson",
+      "lemma": "lesson",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 9,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "began",
+      "lemma": "begin",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 16,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ",",
+      "lemma": ",",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 21,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "Mira",
+      "lemma": "Mira",
+      "pos": "PROPN",
+      "is_sent_start": false,
+      "idx_in_text": 23,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "opened",
+      "lemma": "open",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 28,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 35,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "dictionary",
+      "lemma": "dictionary",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 39,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "and",
+      "lemma": "and",
+      "pos": "CCONJ",
+      "is_sent_start": false,
+      "idx_in_text": 50,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "looked",
+      "lemma": "look",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 54,
+      "translatable": true,
+      "unit_id": 0,
+      "pair_id": null
+    },
+    {
+      "text": "up",
+      "lemma": "up",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 61,
+      "translatable": false,
+      "unit_id": 0,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 64,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "strange",
+      "lemma": "strange",
+      "pos": "ADJ",
+      "is_sent_start": false,
+      "idx_in_text": 68,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "word",
+      "lemma": "word",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 76,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ".",
+      "lemma": ".",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 80,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "Her",
+      "lemma": "her",
+      "pos": "PRON",
+      "is_sent_start": true,
+      "idx_in_text": 82,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "brother",
+      "lemma": "brother",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 86,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "turned",
+      "lemma": "turn",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 94,
+      "translatable": true,
+      "unit_id": 1,
+      "pair_id": null
+    },
+    {
+      "text": "on",
+      "lemma": "on",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 101,
+      "translatable": false,
+      "unit_id": 1,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 104,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "lamp",
+      "lemma": "lamp",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 108,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "and",
+      "lemma": "and",
+      "pos": "CCONJ",
+      "is_sent_start": false,
+      "idx_in_text": 113,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "picked",
+      "lemma": "pick",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 117,
+      "translatable": true,
+      "unit_id": 6,
+      "pair_id": 0
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 124,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "book",
+      "lemma": "book",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 128,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "up",
+      "lemma": "up",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 133,
+      "translatable": false,
+      "unit_id": 7,
+      "pair_id": 0
+    },
+    {
+      "text": "from",
+      "lemma": "from",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 136,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 141,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "floor",
+      "lemma": "floor",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 145,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ".",
+      "lemma": ".",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 150,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "He",
+      "lemma": "he",
+      "pos": "PRON",
+      "is_sent_start": true,
+      "idx_in_text": 152,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "had",
+      "lemma": "have",
+      "pos": "AUX",
+      "is_sent_start": false,
+      "idx_in_text": 155,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "given",
+      "lemma": "give",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 159,
+      "translatable": false,
+      "unit_id": 2,
+      "pair_id": null
+    },
+    {
+      "text": "up",
+      "lemma": "up",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 165,
+      "translatable": false,
+      "unit_id": 2,
+      "pair_id": null
+    },
+    {
+      "text": "smoking",
+      "lemma": "smoking",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 168,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "last",
+      "lemma": "last",
+      "pos": "ADJ",
+      "is_sent_start": false,
+      "idx_in_text": 176,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "winter",
+      "lemma": "winter",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 181,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "and",
+      "lemma": "and",
+      "pos": "CCONJ",
+      "is_sent_start": false,
+      "idx_in_text": 188,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "taken",
+      "lemma": "take",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 192,
+      "translatable": false,
+      "unit_id": 3,
+      "pair_id": null
+    },
+    {
+      "text": "up",
+      "lemma": "up",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 198,
+      "translatable": false,
+      "unit_id": 3,
+      "pair_id": null
+    },
+    {
+      "text": "reading",
+      "lemma": "read",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 201,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "instead",
+      "lemma": "instead",
+      "pos": "ADV",
+      "is_sent_start": false,
+      "idx_in_text": 209,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ".",
+      "lemma": ".",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 216,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "She",
+      "lemma": "she",
+      "pos": "PRON",
+      "is_sent_start": true,
+      "idx_in_text": 218,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "looked",
+      "lemma": "look",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 222,
+      "translatable": true,
+      "unit_id": 8,
+      "pair_id": 1
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 229,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "new",
+      "lemma": "new",
+      "pos": "ADJ",
+      "is_sent_start": false,
+      "idx_in_text": 233,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "phrase",
+      "lemma": "phrase",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 237,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "up",
+      "lemma": "up",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 244,
+      "translatable": false,
+      "unit_id": 9,
+      "pair_id": 1
+    },
+    {
+      "text": "and",
+      "lemma": "and",
+      "pos": "CCONJ",
+      "is_sent_start": false,
+      "idx_in_text": 247,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "wrote",
+      "lemma": "write",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 251,
+      "translatable": false,
+      "unit_id": 10,
+      "pair_id": 2
+    },
+    {
+      "text": "it",
+      "lemma": "it",
+      "pos": "PRON",
+      "is_sent_start": false,
+      "idx_in_text": 257,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "down",
+      "lemma": "down",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 260,
+      "translatable": false,
+      "unit_id": 11,
+      "pair_id": 2
+    },
+    {
+      "text": "in",
+      "lemma": "in",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 265,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "her",
+      "lemma": "her",
+      "pos": "PRON",
+      "is_sent_start": false,
+      "idx_in_text": 268,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "notebook",
+      "lemma": "notebook",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 272,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ".",
+      "lemma": ".",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 280,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "Later",
+      "lemma": "later",
+      "pos": "ADV",
+      "is_sent_start": true,
+      "idx_in_text": 282,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "he",
+      "lemma": "he",
+      "pos": "PRON",
+      "is_sent_start": false,
+      "idx_in_text": 288,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "turned",
+      "lemma": "turn",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 291,
+      "translatable": true,
+      "unit_id": 12,
+      "pair_id": 3
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 298,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "lights",
+      "lemma": "light",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 302,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "off",
+      "lemma": "off",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 309,
+      "translatable": false,
+      "unit_id": 13,
+      "pair_id": 3
+    },
+    {
+      "text": ",",
+      "lemma": ",",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 312,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "put",
+      "lemma": "put",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 314,
+      "translatable": false,
+      "unit_id": 14,
+      "pair_id": 4
+    },
+    {
+      "text": "his",
+      "lemma": "his",
+      "pos": "PRON",
+      "is_sent_start": false,
+      "idx_in_text": 318,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "jacket",
+      "lemma": "jacket",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 322,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "on",
+      "lemma": "on",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 329,
+      "translatable": false,
+      "unit_id": 15,
+      "pair_id": 4
+    },
+    {
+      "text": ",",
+      "lemma": ",",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 331,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "and",
+      "lemma": "and",
+      "pos": "CCONJ",
+      "is_sent_start": false,
+      "idx_in_text": 333,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "went",
+      "lemma": "go",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 337,
+      "translatable": false,
+      "unit_id": 4,
+      "pair_id": null
+    },
+    {
+      "text": "out",
+      "lemma": "out",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 342,
+      "translatable": false,
+      "unit_id": 4,
+      "pair_id": null
+    },
+    {
+      "text": "into",
+      "lemma": "into",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 346,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 351,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "rain",
+      "lemma": "rain",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 355,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ".",
+      "lemma": ".",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 359,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "They",
+      "lemma": "they",
+      "pos": "PRON",
+      "is_sent_start": true,
+      "idx_in_text": 361,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "figured",
+      "lemma": "figure",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 366,
+      "translatable": true,
+      "unit_id": 5,
+      "pair_id": null
+    },
+    {
+      "text": "out",
+      "lemma": "out",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 374,
+      "translatable": false,
+      "unit_id": 5,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 378,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "puzzle",
+      "lemma": "puzzle",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 382,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "together",
+      "lemma": "together",
+      "pos": "ADV",
+      "is_sent_start": false,
+      "idx_in_text": 389,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "before",
+      "lemma": "before",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 398,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "dinner",
+      "lemma": "dinner",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 405,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ".",
+      "lemma": ".",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 411,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "Finally",
+      "lemma": "finally",
+      "pos": "ADV",
+      "is_sent_start": true,
+      "idx_in_text": 413,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ",",
+      "lemma": ",",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 420,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "she",
+      "lemma": "she",
+      "pos": "PRON",
+      "is_sent_start": false,
+      "idx_in_text": 422,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "closed",
+      "lemma": "close",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 426,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 433,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "book",
+      "lemma": "book",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 437,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ",",
+      "lemma": ",",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 441,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "shut",
+      "lemma": "shut",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 443,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 448,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "window",
+      "lemma": "window",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 452,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "down",
+      "lemma": "down",
+      "pos": "ADV",
+      "is_sent_start": false,
+      "idx_in_text": 459,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ",",
+      "lemma": ",",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 463,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "and",
+      "lemma": "and",
+      "pos": "CCONJ",
+      "is_sent_start": false,
+      "idx_in_text": 465,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "picked",
+      "lemma": "pick",
+      "pos": "VERB",
+      "is_sent_start": false,
+      "idx_in_text": 469,
+      "translatable": true,
+      "unit_id": 16,
+      "pair_id": 5
+    },
+    {
+      "text": "her",
+      "lemma": "her",
+      "pos": "PRON",
+      "is_sent_start": false,
+      "idx_in_text": 476,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "keys",
+      "lemma": "key",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 480,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "up",
+      "lemma": "up",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 485,
+      "translatable": false,
+      "unit_id": 17,
+      "pair_id": 5
+    },
+    {
+      "text": "from",
+      "lemma": "from",
+      "pos": "ADP",
+      "is_sent_start": false,
+      "idx_in_text": 488,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "the",
+      "lemma": "the",
+      "pos": "DET",
+      "is_sent_start": false,
+      "idx_in_text": 493,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "table",
+      "lemma": "table",
+      "pos": "NOUN",
+      "is_sent_start": false,
+      "idx_in_text": 497,
+      "translatable": true,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": ".",
+      "lemma": ".",
+      "pos": "PUNCT",
+      "is_sent_start": false,
+      "idx_in_text": 502,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    },
+    {
+      "text": "\n",
+      "lemma": "\n",
+      "pos": "SPACE",
+      "is_sent_start": false,
+      "idx_in_text": 503,
+      "translatable": false,
+      "unit_id": null,
+      "pair_id": null
+    }
+  ],
+  "units": [
+    {
+      "id": 0,
+      "token_ids": [
+        10,
+        11
+      ],
+      "lemma": "look up",
+      "kind": "phrasal",
+      "is_split_pv": false,
+      "pair_id": null
+    },
+    {
+      "id": 1,
+      "token_ids": [
+        18,
+        19
+      ],
+      "lemma": "turn on",
+      "kind": "phrasal",
+      "is_split_pv": false,
+      "pair_id": null
+    },
+    {
+      "id": 6,
+      "token_ids": [
+        23
+      ],
+      "lemma": "pick up",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 0
+    },
+    {
+      "id": 7,
+      "token_ids": [
+        26
+      ],
+      "lemma": "pick up",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 0
+    },
+    {
+      "id": 2,
+      "token_ids": [
+        33,
+        34
+      ],
+      "lemma": "give up",
+      "kind": "phrasal",
+      "is_split_pv": false,
+      "pair_id": null
+    },
+    {
+      "id": 3,
+      "token_ids": [
+        39,
+        40
+      ],
+      "lemma": "take up",
+      "kind": "phrasal",
+      "is_split_pv": false,
+      "pair_id": null
+    },
+    {
+      "id": 8,
+      "token_ids": [
+        45
+      ],
+      "lemma": "look up",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 1
+    },
+    {
+      "id": 9,
+      "token_ids": [
+        49
+      ],
+      "lemma": "look up",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 1
+    },
+    {
+      "id": 10,
+      "token_ids": [
+        51
+      ],
+      "lemma": "write down",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 2
+    },
+    {
+      "id": 11,
+      "token_ids": [
+        53
+      ],
+      "lemma": "write down",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 2
+    },
+    {
+      "id": 12,
+      "token_ids": [
+        60
+      ],
+      "lemma": "turn off",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 3
+    },
+    {
+      "id": 13,
+      "token_ids": [
+        63
+      ],
+      "lemma": "turn off",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 3
+    },
+    {
+      "id": 14,
+      "token_ids": [
+        65
+      ],
+      "lemma": "put on",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 4
+    },
+    {
+      "id": 15,
+      "token_ids": [
+        68
+      ],
+      "lemma": "put on",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 4
+    },
+    {
+      "id": 4,
+      "token_ids": [
+        71,
+        72
+      ],
+      "lemma": "go out",
+      "kind": "phrasal",
+      "is_split_pv": false,
+      "pair_id": null
+    },
+    {
+      "id": 5,
+      "token_ids": [
+        78,
+        79
+      ],
+      "lemma": "figure out",
+      "kind": "phrasal",
+      "is_split_pv": false,
+      "pair_id": null
+    },
+    {
+      "id": 16,
+      "token_ids": [
+        99
+      ],
+      "lemma": "pick up",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 5
+    },
+    {
+      "id": 17,
+      "token_ids": [
+        102
+      ],
+      "lemma": "pick up",
+      "kind": "split_phrasal",
+      "is_split_pv": true,
+      "pair_id": 5
+    }
+  ]
+}
