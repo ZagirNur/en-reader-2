@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# M11.1: the single migration-seeded user that owns every piece of legacy
+# content. Real signup/login lands in M11.2 — until then, all routes pass
+# this id to the DAOs via the kwarg defaults below.
+SEED_USER_ID = 1
+
 _conn: sqlite3.Connection | None = None
 
 
@@ -166,11 +171,132 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """M11.1: introduce the ``users`` table and per-user scoping.
+
+    Creates ``users`` + seeds a single ``seed@local`` row (id=1) that owns
+    every piece of pre-M11 content, migrates ``meta.current_book_id`` into
+    ``users.current_book_id``, and rebuilds ``books`` / ``user_dictionary``
+    / ``reading_progress`` with a ``user_id`` column and updated UNIQUE
+    tuples. Foreign keys are temporarily disabled because SQLite evaluates
+    them mid-rename-and-copy, and the intermediate ``*_old`` tables would
+    briefly violate the new constraints otherwise. We flip foreign_keys
+    OFF here and ``migrate()`` re-enables it after the transaction ends
+    (PRAGMA changes are only honoured outside a transaction).
+    """
+    conn.execute("PRAGMA foreign_keys = OFF")
+    # legacy_alter_table: without this, SQLite rewrites FK references in
+    # *other* tables when we do `ALTER TABLE books RENAME TO books_old`.
+    # That would leave `pages.book_id` pointing at `books_old`, which
+    # disappears a few lines later. Legacy mode keeps FK text literal.
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute("""
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          current_book_id INTEGER
+        )
+        """)
+    conn.execute(
+        "INSERT INTO users(email, password_hash, created_at) VALUES(?, ?, ?)",
+        (
+            "seed@local",
+            "__migration_placeholder__",
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    seed_user_id = conn.execute("SELECT id FROM users WHERE email='seed@local'").fetchone()["id"]
+
+    row = conn.execute("SELECT value FROM meta WHERE key='current_book_id'").fetchone()
+    if row and row["value"]:
+        conn.execute(
+            "UPDATE users SET current_book_id=? WHERE id=?",
+            (int(row["value"]), seed_user_id),
+        )
+    conn.execute("DELETE FROM meta WHERE key='current_book_id'")
+
+    conn.execute("ALTER TABLE books RENAME TO books_old")
+    conn.execute("""
+        CREATE TABLE books (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          author TEXT,
+          language TEXT NOT NULL DEFAULT 'en',
+          source_format TEXT NOT NULL,
+          source_bytes_size INTEGER NOT NULL DEFAULT 0,
+          total_pages INTEGER NOT NULL,
+          cover_path TEXT,
+          created_at TEXT NOT NULL
+        )
+        """)
+    conn.execute(
+        """
+        INSERT INTO books(id, user_id, title, author, language, source_format,
+                          source_bytes_size, total_pages, cover_path, created_at)
+        SELECT id, ?, title, author, language, source_format,
+               source_bytes_size, total_pages, cover_path, created_at
+        FROM books_old
+        """,
+        (seed_user_id,),
+    )
+    conn.execute("DROP TABLE books_old")
+    conn.execute("CREATE INDEX idx_books_user ON books(user_id)")
+
+    conn.execute("ALTER TABLE user_dictionary RENAME TO ud_old")
+    conn.execute("""
+        CREATE TABLE user_dictionary (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          lemma TEXT NOT NULL,
+          translation TEXT NOT NULL,
+          first_seen_at TEXT NOT NULL,
+          UNIQUE(user_id, lemma)
+        )
+        """)
+    conn.execute(
+        """
+        INSERT INTO user_dictionary(user_id, lemma, translation, first_seen_at)
+        SELECT ?, lemma, translation, first_seen_at FROM ud_old
+        """,
+        (seed_user_id,),
+    )
+    conn.execute("DROP TABLE ud_old")
+    conn.execute("CREATE INDEX idx_ud_user_lemma ON user_dictionary(user_id, lemma)")
+
+    conn.execute("ALTER TABLE reading_progress RENAME TO rp_old")
+    conn.execute("""
+        CREATE TABLE reading_progress (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          last_page_index INTEGER NOT NULL DEFAULT 0,
+          last_page_offset REAL NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          UNIQUE(user_id, book_id)
+        )
+        """)
+    conn.execute(
+        """
+        INSERT INTO reading_progress(user_id, book_id, last_page_index,
+                                     last_page_offset, updated_at)
+        SELECT ?, book_id, last_page_index, last_page_offset, updated_at
+        FROM rp_old
+        """,
+        (seed_user_id,),
+    )
+    conn.execute("DROP TABLE rp_old")
+    conn.execute("CREATE INDEX idx_rp_user_book ON reading_progress(user_id, book_id)")
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
     _migrate_v2_to_v3,
     _migrate_v3_to_v4,
+    _migrate_v4_to_v5,
 ]
 
 
@@ -192,23 +318,30 @@ def migrate() -> None:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (str(i + 1),),
             )
+    # Migrations may toggle `foreign_keys` OFF (v4→v5 does) — PRAGMA changes
+    # are only honoured outside a transaction, so restore the enforcement
+    # default here, post-commit, before any DAO runs on this connection.
+    conn.execute("PRAGMA foreign_keys = ON")
     logger.info("DB migrated to version %d", target)
 
 
 # ---------- user dictionary DAO ----------
 
 
-def dict_add(lemma: str, translation: str) -> None:
+def dict_add(lemma: str, translation: str, *, user_id: int = SEED_USER_ID) -> None:
     """Insert ``(lemma, translation)`` if the lemma is not already present.
 
     First write wins — updates require an explicit ``dict_remove`` + add.
+    ``user_id`` defaults to :data:`SEED_USER_ID` so pre-M11 call sites keep
+    working without changes.
     """
     conn = get_db()
     with conn:
         conn.execute(
-            "INSERT OR IGNORE INTO user_dictionary(lemma, translation, first_seen_at) "
-            "VALUES(?, ?, ?)",
+            "INSERT OR IGNORE INTO user_dictionary(user_id, lemma, translation, first_seen_at) "
+            "VALUES(?, ?, ?, ?)",
             (
+                user_id,
                 lemma.lower(),
                 translation,
                 datetime.now(timezone.utc).isoformat(),
@@ -216,28 +349,34 @@ def dict_add(lemma: str, translation: str) -> None:
         )
 
 
-def dict_remove(lemma: str) -> None:
+def dict_remove(lemma: str, *, user_id: int = SEED_USER_ID) -> None:
     """Delete the row for ``lemma`` (case-insensitive). No error if missing."""
     conn = get_db()
     with conn:
-        conn.execute("DELETE FROM user_dictionary WHERE lemma = ?", (lemma.lower(),))
+        conn.execute(
+            "DELETE FROM user_dictionary WHERE user_id = ? AND lemma = ?",
+            (user_id, lemma.lower()),
+        )
 
 
-def dict_get(lemma: str) -> str | None:
+def dict_get(lemma: str, *, user_id: int = SEED_USER_ID) -> str | None:
     """Return the translation for ``lemma`` (case-insensitive), or ``None``."""
     conn = get_db()
     cur = conn.execute(
-        "SELECT translation FROM user_dictionary WHERE lemma = ?",
-        (lemma.lower(),),
+        "SELECT translation FROM user_dictionary WHERE user_id = ? AND lemma = ?",
+        (user_id, lemma.lower()),
     )
     row = cur.fetchone()
     return row["translation"] if row else None
 
 
-def dict_all() -> dict[str, str]:
+def dict_all(*, user_id: int = SEED_USER_ID) -> dict[str, str]:
     """Return the full dictionary as a ``{lemma: translation}`` dict."""
     conn = get_db()
-    cur = conn.execute("SELECT lemma, translation FROM user_dictionary")
+    cur = conn.execute(
+        "SELECT lemma, translation FROM user_dictionary WHERE user_id = ?",
+        (user_id,),
+    )
     return {row["lemma"]: row["translation"] for row in cur.fetchall()}
 
 
@@ -332,7 +471,7 @@ def _compute_page_images(page_text: str, id_to_mime: dict[str, str]) -> list[Pag
     return out
 
 
-def book_save(parsed: "ParsedBook") -> int:
+def book_save(parsed: "ParsedBook", *, user_id: int = SEED_USER_ID) -> int:
     """Run the full analyse + chunk + persist pipeline for ``parsed``.
 
     Runs in a single ``with conn:`` transaction so a failure midway leaves
@@ -359,10 +498,11 @@ def book_save(parsed: "ParsedBook") -> int:
     conn = get_db()
     with conn:
         cur = conn.execute(
-            "INSERT INTO books(title, author, language, source_format, "
+            "INSERT INTO books(user_id, title, author, language, source_format, "
             "source_bytes_size, total_pages, cover_path, created_at) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
+                user_id,
                 parsed.title,
                 parsed.author,
                 parsed.language,
@@ -407,22 +547,35 @@ def _row_to_book_meta(row: sqlite3.Row) -> BookMeta:
     )
 
 
-def book_meta(book_id: int) -> BookMeta | None:
-    """Return the :class:`BookMeta` for ``book_id`` or ``None`` if missing."""
+def book_meta(book_id: int, *, user_id: int | None = None) -> BookMeta | None:
+    """Return the :class:`BookMeta` for ``book_id`` or ``None`` if missing.
+
+    If ``user_id`` is given, require ownership. Internal helpers that don't
+    care about tenancy can call this with the default ``None``.
+    """
     conn = get_db()
-    cur = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,))
+    if user_id is None:
+        cur = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,))
+    else:
+        cur = conn.execute(
+            "SELECT * FROM books WHERE id = ? AND user_id = ?",
+            (book_id, user_id),
+        )
     row = cur.fetchone()
     return _row_to_book_meta(row) if row else None
 
 
-def book_list() -> list[BookMeta]:
+def book_list(*, user_id: int = SEED_USER_ID) -> list[BookMeta]:
     """Return every book, newest first (ordered by ``created_at DESC``)."""
     conn = get_db()
-    cur = conn.execute("SELECT * FROM books ORDER BY created_at DESC, id DESC")
+    cur = conn.execute(
+        "SELECT * FROM books WHERE user_id = ? ORDER BY created_at DESC, id DESC",
+        (user_id,),
+    )
     return [_row_to_book_meta(row) for row in cur.fetchall()]
 
 
-def book_delete(book_id: int) -> None:
+def book_delete(book_id: int, *, user_id: int | None = None) -> None:
     """Delete a book and its cascaded pages + book_images rows.
 
     ``pages`` cascades via the FK, but ``book_images`` predates the FK story
@@ -434,51 +587,60 @@ def book_delete(book_id: int) -> None:
     """
     conn = get_db()
     with conn:
-        conn.execute("DELETE FROM book_images WHERE book_id = ?", (book_id,))
-        conn.execute("DELETE FROM pages WHERE book_id = ?", (book_id,))
-        conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
-        # M10.5: clear current-book pointer if it matched this book. We read
-        # + write inside the same `with conn:` block so the cascade lands
-        # atomically.
-        row = conn.execute("SELECT value FROM meta WHERE key='current_book_id'").fetchone()
-        if row and row["value"] and int(row["value"]) == book_id:
+        if user_id is None:
+            conn.execute("DELETE FROM book_images WHERE book_id = ?", (book_id,))
+            conn.execute("DELETE FROM pages WHERE book_id = ?", (book_id,))
+            conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
+        else:
             conn.execute(
-                "INSERT INTO meta(key, value) VALUES('current_book_id', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                ("",),
+                "DELETE FROM book_images WHERE book_id IN "
+                "(SELECT id FROM books WHERE id = ? AND user_id = ?)",
+                (book_id, user_id),
             )
+            conn.execute(
+                "DELETE FROM pages WHERE book_id IN "
+                "(SELECT id FROM books WHERE id = ? AND user_id = ?)",
+                (book_id, user_id),
+            )
+            conn.execute(
+                "DELETE FROM books WHERE id = ? AND user_id = ?",
+                (book_id, user_id),
+            )
+        # M11.1: clear current-book pointer on any user whose pointer matched.
+        # The FK on reading_progress and pages already cascades, but users.current_book_id
+        # has no FK — null it explicitly so no row references a deleted book.
+        conn.execute(
+            "UPDATE users SET current_book_id = NULL WHERE current_book_id = ?",
+            (book_id,),
+        )
 
 
 # ---------- current-book DAO (M10.5) ----------
 
 
-def current_book_get() -> int | None:
-    """Return the current-book id from ``meta``, or ``None`` if unset.
+def current_book_get(*, user_id: int = SEED_USER_ID) -> int | None:
+    """Return ``users.current_book_id`` for ``user_id`` or ``None``.
 
-    Stored as a string in ``meta.value`` (``""`` meaning "no current book")
-    so we don't have to invent a new sentinel value or a second column.
-    M11.1 will migrate this to ``users.current_book_id``.
+    M11.1 moved this pointer off ``meta`` and onto the users table so each
+    user can park on their own most-recent book.
     """
     conn = get_db()
-    row = conn.execute("SELECT value FROM meta WHERE key='current_book_id'").fetchone()
-    if not row or not row["value"]:
+    row = conn.execute(
+        "SELECT current_book_id FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if not row or row["current_book_id"] is None:
         return None
-    return int(row["value"])
+    return int(row["current_book_id"])
 
 
-def current_book_set(book_id: int | None) -> None:
-    """UPSERT the current-book pointer. ``None`` clears it.
-
-    Callers: ``POST /api/me/current-book`` and ``book_delete`` (cascade).
-    The UPSERT keeps this idempotent without a separate "exists?" query.
-    """
-    val = "" if book_id is None else str(book_id)
+def current_book_set(book_id: int | None, *, user_id: int = SEED_USER_ID) -> None:
+    """Update ``users.current_book_id``. ``None`` clears it."""
     conn = get_db()
     with conn:
         conn.execute(
-            "INSERT INTO meta(key, value) VALUES('current_book_id', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (val,),
+            "UPDATE users SET current_book_id = ? WHERE id = ?",
+            (book_id, user_id),
         )
 
 
@@ -510,7 +672,13 @@ def page_load(book_id: int, page_index: int) -> Page | None:
     return _row_to_page(row) if row else None
 
 
-def progress_set(book_id: int, page_index: int, page_offset: float) -> None:
+def progress_set(
+    book_id: int,
+    page_index: int,
+    page_offset: float,
+    *,
+    user_id: int = SEED_USER_ID,
+) -> None:
     """UPSERT the reading progress row for ``book_id``.
 
     Called by ``POST /api/books/{id}/progress`` whenever the frontend
@@ -521,13 +689,14 @@ def progress_set(book_id: int, page_index: int, page_offset: float) -> None:
     conn = get_db()
     with conn:
         conn.execute(
-            "INSERT INTO reading_progress(book_id, last_page_index, "
-            "last_page_offset, updated_at) VALUES(?, ?, ?, ?) "
-            "ON CONFLICT(book_id) DO UPDATE SET "
+            "INSERT INTO reading_progress(user_id, book_id, last_page_index, "
+            "last_page_offset, updated_at) VALUES(?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, book_id) DO UPDATE SET "
             "last_page_index=excluded.last_page_index, "
             "last_page_offset=excluded.last_page_offset, "
             "updated_at=excluded.updated_at",
             (
+                user_id,
                 book_id,
                 page_index,
                 page_offset,
@@ -536,7 +705,7 @@ def progress_set(book_id: int, page_index: int, page_offset: float) -> None:
         )
 
 
-def progress_get(book_id: int) -> tuple[int, float]:
+def progress_get(book_id: int, *, user_id: int = SEED_USER_ID) -> tuple[int, float]:
     """Return ``(last_page_index, last_page_offset)`` or ``(0, 0.0)``.
 
     The zero fallback keeps ``/content`` simple: the frontend always
@@ -545,8 +714,9 @@ def progress_get(book_id: int) -> tuple[int, float]:
     """
     conn = get_db()
     cur = conn.execute(
-        "SELECT last_page_index, last_page_offset FROM reading_progress " "WHERE book_id = ?",
-        (book_id,),
+        "SELECT last_page_index, last_page_offset FROM reading_progress "
+        "WHERE user_id = ? AND book_id = ?",
+        (user_id, book_id),
     )
     row = cur.fetchone()
     if row is None:
