@@ -99,6 +99,9 @@ async function loadBookContent(bookId, offset = 0, limit = 1) {
 // scope so `touchmove`/`touchend` listeners can cancel the pending timeout.
 let _longTapTimer = null;
 let _longTapCard = null;
+// Set when the long-tap timer fires, to swallow the synthetic click that
+// touchend produces. Cleared by the grid click handler after one swallow.
+let _longTapFired = false;
 
 function closeCardMenu() {
   document.querySelectorAll(".card-menu").forEach((n) => n.remove());
@@ -230,6 +233,13 @@ function renderLibrary() {
 
   // --- delegated listeners on `.grid` ---
   grid.addEventListener("click", (e) => {
+    // If a long-tap just opened the menu, swallow the synthetic click so we
+    // don't navigate away from the card the user intended to delete.
+    if (_longTapFired) {
+      _longTapFired = false;
+      e.preventDefault();
+      return;
+    }
     // If a click happens on the menu itself, don't trigger card navigation.
     if (e.target && e.target.closest && e.target.closest(".card-menu")) return;
     const add = e.target.closest(".add-card");
@@ -257,11 +267,13 @@ function renderLibrary() {
     const card = e.target.closest(".card[data-book-id]");
     if (!card) return;
     _longTapCard = card;
+    _longTapFired = false;
     clearTimeout(_longTapTimer);
     _longTapTimer = setTimeout(() => {
       if (!_longTapCard) return;
       const id = Number(_longTapCard.dataset.bookId);
       showCardMenu(_longTapCard, id);
+      _longTapFired = true;
       _longTapCard = null;
       _longTapTimer = null;
     }, 500);
