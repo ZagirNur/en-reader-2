@@ -39,6 +39,14 @@ let _topObs = null;
 let _bottomObs = null;
 let _loadingTop = false;
 let _loadingBottom = false;
+// Debounced progress save (M10.4). `_saveTimer` is the pending setTimeout
+// handle (null when nothing is scheduled). `_lastSaved` remembers what we
+// actually POSTed so we can skip trivially-close re-saves. The
+// `_beforeUnloadHandler` reference is held here so `teardownReaderScroll`
+// can detach it — otherwise we'd leak a handler per reader mount.
+let _saveTimer = null;
+let _lastSaved = { pageIndex: null, offset: null };
+let _beforeUnloadHandler = null;
 
 function setState(patch) {
   const prevView = state.view;
@@ -92,6 +100,19 @@ function teardownReaderScroll() {
   }
   _loadingTop = false;
   _loadingBottom = false;
+  // M10.4: drop the debounced progress-save timer and detach the
+  // beforeunload handler so a library view doesn't keep pinging
+  // /progress on tab close. We do NOT reset `_lastSaved` here — it's
+  // keyed implicitly by the currently-loaded book and gets reset on
+  // book change inside `renderReader`'s loader branch.
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
+  if (_beforeUnloadHandler) {
+    window.removeEventListener("beforeunload", _beforeUnloadHandler);
+    _beforeUnloadHandler = null;
+  }
 }
 
 // --- router ---
@@ -591,27 +612,96 @@ function applyAutoTranslation(pageSection, unitId, ru) {
   });
 }
 
-// Find the page `<section class="page">` whose vertical center is nearest to
-// the viewport center and return its `data-page-index` as a Number. Returns
-// 0 when no page sections exist in the DOM.
-function findVisiblePageIndex() {
+// Find the page `<section class="page">` whose intersection with the
+// viewport is greatest and return it. Returns null when no .page sections
+// exist (or none intersect). M10.4 reuses this for progress-save so we
+// align on a single "visible page" definition across the reader.
+function findVisiblePageSection() {
   const pages = document.querySelectorAll("section.page");
-  if (!pages.length) return 0;
-  const vCenter = window.innerHeight / 2;
-  let bestIdx = 0;
-  let bestDist = Infinity;
+  if (!pages.length) return null;
+  const vh = window.innerHeight || 0;
+  let best = null;
+  let bestIntersect = 0;
   for (const p of pages) {
-    const rect = p.getBoundingClientRect();
-    const center = rect.top + rect.height / 2;
-    const dist = Math.abs(center - vCenter);
-    if (dist < bestDist) {
-      bestDist = dist;
-      const raw = p.dataset.pageIndex;
-      const n = Number(raw);
-      bestIdx = Number.isFinite(n) ? n : 0;
+    const r = p.getBoundingClientRect();
+    const top = Math.max(r.top, 0);
+    const bot = Math.min(r.bottom, vh);
+    const intersect = Math.max(0, bot - top);
+    if (intersect > bestIntersect) {
+      bestIntersect = intersect;
+      best = p;
     }
   }
-  return bestIdx;
+  return best;
+}
+
+// Returns the visible page's `data-page-index` as a Number (0 when none).
+// M10.4 delegates to findVisiblePageSection so the progress-bar and
+// progress-save agree on a single "visible page" definition.
+function findVisiblePageIndex() {
+  const section = findVisiblePageSection();
+  if (!section) return 0;
+  const n = Number(section.dataset.pageIndex);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// M10.4: compute how far the given `.page` section has scrolled past the
+// top of the viewport, as a fraction of its own height, clamped to [0, 1].
+// `r.top < 0` means the section is partially above the viewport; `-r.top`
+// is the number of pixels scrolled past. Zero-height sections collapse to 0.
+function computeOffset(section) {
+  const r = section.getBoundingClientRect();
+  if (r.height <= 0) return 0;
+  const offset = -r.top / r.height;
+  return Math.max(0, Math.min(1, offset));
+}
+
+// M10.4: debounced progress save with a stale-save guard. Called once per
+// rAF tick from the reader scroll handler. We ALWAYS clear any pending
+// `_saveTimer` before any early-return — otherwise a fast 10 → 8 scroll
+// could return early at 8 while the 10-timer survives and lands a stale
+// POST. Bails entirely while `state.restoring` is true (M10.2) so the
+// programmatic scrollTo's don't overwrite the target we're restoring to.
+function scheduleProgressSave() {
+  if (state.restoring) return;
+  const cb = state.currentBook;
+  if (!cb || cb.bookId == null) return;
+
+  const section = findVisiblePageSection();
+  if (!section) return;
+  const pageIndex = Number(section.dataset.pageIndex);
+  if (!Number.isFinite(pageIndex)) return;
+  const offset = computeOffset(section);
+
+  // Clear BEFORE any no-op return so a stale pending timer can't land.
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
+
+  // No meaningful change since last successful POST — skip, with the
+  // timer already cleared so the previous pending save (if any) is gone.
+  if (
+    _lastSaved.pageIndex === pageIndex &&
+    _lastSaved.offset != null &&
+    Math.abs(_lastSaved.offset - offset) < 0.02
+  ) {
+    return;
+  }
+
+  const bookId = cb.bookId;
+  _saveTimer = setTimeout(async () => {
+    try {
+      await apiPost(`/api/books/${bookId}/progress`, {
+        last_page_index: pageIndex,
+        last_page_offset: offset,
+      });
+      _lastSaved = { pageIndex, offset };
+    } catch (_e) {
+      // Silent: user shouldn't see transient progress-save errors.
+    }
+    _saveTimer = null;
+  }, 1500);
 }
 
 // --- scroll restore (M10.2) ---
@@ -839,6 +929,10 @@ function renderReader() {
   // one (defensive — currentBook changes re-run renderReader()).
   teardownReaderScroll();
   _readerLastScrollY = window.scrollY || 0;
+  // M10.4: reset the "last POSTed" memo on each mount so switching books
+  // (or remounting the same book) never skips the first save because the
+  // old book happened to land at the same (pageIndex, offset).
+  _lastSaved = { pageIndex: null, offset: null };
 
   const totalPages =
     (state.currentBook && state.currentBook.totalPages) ||
@@ -868,6 +962,11 @@ function renderReader() {
     );
     const fill = hdr.querySelector(".progress-fill");
     if (fill) fill.style.width = `${percent}%`;
+
+    // M10.4: same rAF tick drives the debounced progress save so we don't
+    // add a second scroll listener. scheduleProgressSave bails internally
+    // while state.restoring is true.
+    scheduleProgressSave();
   };
 
   _readerScrollHandler = () => {
@@ -877,6 +976,37 @@ function renderReader() {
     _readerScrollRafId = requestAnimationFrame(runScrollTick);
   };
   window.addEventListener("scroll", _readerScrollHandler, { passive: true });
+
+  // M10.4: flush the current position on tab close via sendBeacon. We
+  // fire unconditionally (not just when `_saveTimer` is pending) because
+  // the browser might also kill us between two debounce windows where
+  // the timer is clear but the user has scrolled since the last POST.
+  // sendBeacon is the only transport that reliably ships during unload.
+  _beforeUnloadHandler = () => {
+    if (state.restoring) return;
+    const cb = state.currentBook;
+    if (!cb || cb.bookId == null) return;
+    if (_saveTimer) {
+      clearTimeout(_saveTimer);
+      _saveTimer = null;
+    }
+    const section = findVisiblePageSection();
+    if (!section) return;
+    const pageIndex = Number(section.dataset.pageIndex);
+    if (!Number.isFinite(pageIndex)) return;
+    const offset = computeOffset(section);
+    try {
+      const body = JSON.stringify({
+        last_page_index: pageIndex,
+        last_page_offset: offset,
+      });
+      const blob = new Blob([body], { type: "application/json" });
+      navigator.sendBeacon(`/api/books/${cb.bookId}/progress`, blob);
+    } catch (_e) {
+      // Silent — nothing we can do during unload.
+    }
+  };
+  window.addEventListener("beforeunload", _beforeUnloadHandler);
 
   // Prime the progress bar so it reflects the initially-visible page.
   runScrollTick();
