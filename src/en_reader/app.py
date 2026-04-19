@@ -55,12 +55,66 @@ class TranslateResponse(BaseModel):
     ru: str
 
 
+class BookListItem(BaseModel):
+    id: int
+    title: str
+    author: str | None
+    total_pages: int
+    has_cover: bool
+
+
 @app.get("/")
 def root() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
 
 
 _CONTENT_MAX_LIMIT = 20
+
+
+@app.get("/api/books", response_model=list[BookListItem])
+def api_books_list() -> list[BookListItem]:
+    """Return every book in the library, newest first.
+
+    Ordering comes straight from :func:`storage.book_list` (``created_at
+    DESC``). ``has_cover`` is a convenience flag for the library UI so it
+    can decide between the real cover route and a generated placeholder
+    tile without a separate HEAD request. Pre-M12 no parser sets
+    ``cover_path``, so the flag is ``False`` in practice — we still
+    compute it defensively so M12 doesn't have to touch this handler.
+    """
+    metas = storage.book_list()
+    return [
+        BookListItem(
+            id=m.id,
+            title=m.title,
+            author=m.author,
+            total_pages=m.total_pages,
+            has_cover=bool(m.cover_path),
+        )
+        for m in metas
+    ]
+
+
+@app.delete("/api/books/{book_id}")
+def api_book_delete(book_id: int) -> Response:
+    """Delete a book plus its pages / images. 404 if the book is unknown.
+
+    The row-level cascade (pages + book_images) lives in
+    :func:`storage.book_delete`. If a cover file exists on disk (it
+    won't pre-M12 since parsers don't populate ``cover_path`` yet) we
+    remove it here and swallow ``FileNotFoundError`` / ``OSError`` so a
+    missing or already-gone file doesn't surface as a 500.
+    """
+    meta = storage.book_meta(book_id)
+    if meta is None:
+        raise HTTPException(status_code=404)
+    if meta.cover_path:
+        try:
+            Path(meta.cover_path).unlink()
+        except (FileNotFoundError, OSError):
+            pass
+    storage.book_delete(book_id)
+    return Response(status_code=204)
 
 
 @app.get("/api/books/{book_id}/content")
