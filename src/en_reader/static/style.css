@@ -22,6 +22,7 @@ body {
 button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 
 .reader { max-width: 720px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.sentinel { height: 1px; }
 .page-body {
   font-size: 17px;
   line-height: 1.65;

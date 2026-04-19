@@ -30,6 +30,15 @@ let _readerScrollRafId = 0;
 // waiting for the 2 s timeout to fire on a dead DOM.
 let _restoreRO = null;
 let _restoreTimeoutId = 0;
+// Lazy-neighbor sentinel observers (M10.3). Two IntersectionObservers watch
+// invisible 1-px sentinels flanking the rendered `.page` sections; when the
+// user scrolls within 400 px of a boundary we fetch the adjacent page and
+// splice it into the DOM. `_loadingTop` / `_loadingBottom` are in-flight
+// re-entrancy guards so overlapping scroll ticks don't double-fetch.
+let _topObs = null;
+let _bottomObs = null;
+let _loadingTop = false;
+let _loadingBottom = false;
 
 function setState(patch) {
   const prevView = state.view;
@@ -70,6 +79,19 @@ function teardownReaderScroll() {
     clearTimeout(_restoreTimeoutId);
     _restoreTimeoutId = 0;
   }
+  // M10.3: also drop the lazy-neighbor sentinel observers and clear their
+  // in-flight guards so a re-render from scratch starts clean. The
+  // observers are re-created in `renderReader()` once the new DOM exists.
+  if (_topObs) {
+    _topObs.disconnect();
+    _topObs = null;
+  }
+  if (_bottomObs) {
+    _bottomObs.disconnect();
+    _bottomObs = null;
+  }
+  _loadingTop = false;
+  _loadingBottom = false;
 }
 
 // --- router ---
@@ -789,12 +811,24 @@ function renderReader() {
   const main = document.createElement("main");
   main.className = "reader size-m reader-root";
 
+  // M10.3: sentinels flank the rendered .page sections so two
+  // IntersectionObservers can pre-fetch neighbors as the user approaches
+  // either end. The sentinels are 1-px divs; the observers are wired up
+  // after this loop.
+  const topSentinel = document.createElement("div");
+  topSentinel.className = "sentinel sentinel-top";
+  main.appendChild(topSentinel);
+
   const pageSections = [];
   for (const page of state.currentBook.pages) {
     const section = buildPageSection(page);
     pageSections.push({ page, section });
     main.appendChild(section);
   }
+
+  const bottomSentinel = document.createElement("div");
+  bottomSentinel.className = "sentinel sentinel-bottom";
+  main.appendChild(bottomSentinel);
 
   main.addEventListener("click", onWordTap);
 
@@ -871,12 +905,175 @@ function renderReader() {
     });
   }
 
+  // M10.3: wire up sentinel-based lazy loading of neighboring pages. The
+  // observers live for the lifetime of the reader view; `teardownReaderScroll`
+  // disconnects them on navigation, and each callback disables itself once
+  // it hits the book boundary. We check `state.restoring` at the callback
+  // top so the restore pass doesn't race with a fetch that would then shift
+  // layout under restoreScroll's feet.
+  if (typeof IntersectionObserver !== "undefined") {
+    const cb = state.currentBook;
+    // If we already rendered the full book (single-page case or tiny book),
+    // skip both observers entirely — nothing to fetch.
+    const needTop = cb.loadedFirstIndex > 0;
+    const needBottom = cb.loadedLastIndex < cb.totalPages - 1;
+    if (needTop) {
+      _topObs = new IntersectionObserver(
+        (entries) => {
+          if (state.restoring) return;
+          if (!entries.some((e) => e.isIntersecting)) return;
+          loadAbove();
+        },
+        { rootMargin: "400px 0px 0px 0px" },
+      );
+      _topObs.observe(topSentinel);
+    }
+    if (needBottom) {
+      _bottomObs = new IntersectionObserver(
+        (entries) => {
+          if (state.restoring) return;
+          if (!entries.some((e) => e.isIntersecting)) return;
+          loadBelow();
+        },
+        { rootMargin: "0px 0px 400px 0px" },
+      );
+      _bottomObs.observe(bottomSentinel);
+    }
+  }
+
   // M10.2: kick off scroll restoration. `state.restoring` was set by the
   // loader branch above; we honour it here so re-renders that don't carry
   // a fresh restore intent (e.g. a userDict change mid-read) don't snap
   // the viewport back to the target.
   if (state.restoring) {
     restoreScroll();
+  }
+}
+
+// --- lazy neighbor loading (M10.3) ---
+// Apply the same `auto_unit_ids` + lemma-sweep passes renderReader runs,
+// but scoped to a single freshly-inserted page section. Keeps the new page
+// visually consistent with its neighbors without re-sweeping the whole
+// reader DOM on every prepend/append.
+function applyTranslationsToSection(page, section) {
+  const autoIds = page.auto_unit_ids || [];
+  for (const unitId of autoIds) {
+    const unit = (page.units || []).find((u) => u.id === unitId);
+    if (!unit) continue;
+    const ru = state.userDict[unit.lemma.toLowerCase()];
+    if (!ru) continue;
+    applyAutoTranslation(section, unitId, ru);
+  }
+  // Pass-2 lemma sweep within the new section only (not the full reader).
+  for (const lemma of Object.keys(state.userDict)) {
+    const ru = state.userDict[lemma];
+    const sel = `.word[data-lemma="${CSS.escape(lemma)}"]:not(.translated)`;
+    section.querySelectorAll(sel).forEach((span) => {
+      replaceWithTranslation(span, ru);
+    });
+  }
+}
+
+async function loadBelow() {
+  if (_loadingBottom) return;
+  if (state.restoring) return;
+  const cb = state.currentBook;
+  if (!cb) return;
+  const nextIdx = cb.loadedLastIndex + 1;
+  if (nextIdx >= cb.totalPages) {
+    if (_bottomObs) {
+      _bottomObs.disconnect();
+      _bottomObs = null;
+    }
+    return;
+  }
+  _loadingBottom = true;
+  try {
+    const data = await apiGet(
+      `/api/books/${encodeURIComponent(cb.bookId)}/content?offset=${nextIdx}&limit=1`,
+    );
+    if (state.view !== "reader" || state.currentBook !== cb) return;
+    const page =
+      Array.isArray(data.pages) && data.pages.length ? data.pages[0] : null;
+    if (!page) return;
+    const section = buildPageSection(page);
+    applyTranslationsToSection(page, section);
+
+    const bottomSentinel = document.querySelector(".sentinel-bottom");
+    if (!bottomSentinel || !bottomSentinel.parentNode) return;
+    bottomSentinel.parentNode.insertBefore(section, bottomSentinel);
+
+    cb.loadedLastIndex = nextIdx;
+    cb.pages.push(page);
+
+    if (cb.loadedLastIndex === cb.totalPages - 1 && _bottomObs) {
+      _bottomObs.disconnect();
+      _bottomObs = null;
+    }
+  } catch (_err) {
+    // Network failure: drop the guard so the observer can retry on the
+    // next intersection tick. A persistent outage just means the reader
+    // stops at whatever's loaded — acceptable for M10.3.
+  } finally {
+    _loadingBottom = false;
+  }
+}
+
+async function loadAbove() {
+  if (_loadingTop) return;
+  if (state.restoring) return;
+  const cb = state.currentBook;
+  if (!cb) return;
+  const prevIdx = cb.loadedFirstIndex - 1;
+  if (prevIdx < 0) {
+    if (_topObs) {
+      _topObs.disconnect();
+      _topObs = null;
+    }
+    return;
+  }
+  _loadingTop = true;
+  try {
+    const data = await apiGet(
+      `/api/books/${encodeURIComponent(cb.bookId)}/content?offset=${prevIdx}&limit=1`,
+    );
+    if (state.view !== "reader" || state.currentBook !== cb) return;
+    const page =
+      Array.isArray(data.pages) && data.pages.length ? data.pages[0] : null;
+    if (!page) return;
+    const section = buildPageSection(page);
+    applyTranslationsToSection(page, section);
+
+    const topSentinel = document.querySelector(".sentinel-top");
+    if (!topSentinel || !topSentinel.parentNode) return;
+
+    // Scroll compensation: snapshot scrollHeight + scrollY BEFORE the
+    // insertion, then `scrollTo` the delta synchronously afterwards so
+    // the user's viewport stays anchored to the page they were reading.
+    // `document.documentElement.scrollHeight` is more reliable than
+    // `document.body.scrollHeight` across mobile browsers.
+    const scrollHeightBefore = document.documentElement.scrollHeight;
+    const scrollTopBefore = window.scrollY;
+
+    // Insert AFTER the top sentinel (before any existing .page section).
+    topSentinel.parentNode.insertBefore(section, topSentinel.nextSibling);
+
+    const scrollHeightAfter = document.documentElement.scrollHeight;
+    const delta = scrollHeightAfter - scrollHeightBefore;
+    window.scrollTo(0, scrollTopBefore + delta);
+
+    cb.loadedFirstIndex = prevIdx;
+    cb.pages.unshift(page);
+
+    if (cb.loadedFirstIndex === 0 && _topObs) {
+      _topObs.disconnect();
+      _topObs = null;
+    }
+  } catch (_err) {
+    // See loadBelow — leave _loadingTop to be cleared in finally and let
+    // the next intersection retry.
+  } finally {
+    _loadingTop = false;
   }
 }
 
