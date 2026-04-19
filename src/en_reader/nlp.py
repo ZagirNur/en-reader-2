@@ -6,6 +6,9 @@ Exposes:
 * `mark_translatable(tokens)` — sets `translatable` per the M1.2 rule.
 * `mark_mwe(doc, tokens, units)` — detects multi-word expressions and groups
   their tokens into a `Unit(kind="mwe")` per the M1.3 rule.
+* `mark_phrasal(doc, tokens, units)` — detects contiguous and split phrasal
+  verbs per the M1.4 rule, producing `Unit(kind="phrasal")` or a pair of
+  `Unit(kind="split_phrasal")` linked by `pair_id`.
 * `analyze(text)` — orchestration entrypoint that returns `(tokens, units)`.
 
 The model (and the MWE matcher built on top of its vocab) is loaded on first
@@ -26,9 +29,11 @@ _nlp: spacy.Language | None = None
 _stop_words: frozenset[str] | None = None
 _mwe_patterns: list[list[str]] | None = None
 _mwe_matcher: PhraseMatcher | None = None
+_phrasal_verbs: frozenset[tuple[str, str]] | None = None
 
 _TRANSLATABLE_POS: frozenset[str] = frozenset({"VERB", "NOUN", "ADJ", "ADV", "PROPN"})
 _AUX_LEMMAS: frozenset[str] = frozenset({"be", "have", "do"})
+_PARTICLE_POS: frozenset[str] = frozenset({"ADP", "ADV", "PART"})
 
 
 def get_nlp() -> spacy.Language:
@@ -58,6 +63,11 @@ def _stop_words_path() -> Path:
 def _mwe_path() -> Path:
     """Path to the curated MWE dictionary (see M1.3)."""
     return _data_dir() / "mwe.txt"
+
+
+def _phrasal_verbs_path() -> Path:
+    """Path to the curated phrasal-verb dictionary (see M1.4)."""
+    return _data_dir() / "phrasal_verbs.txt"
 
 
 def _load_stop_words() -> frozenset[str]:
@@ -101,6 +111,29 @@ def _load_mwe() -> list[list[str]]:
                     patterns.append(words)
         _mwe_patterns = patterns
     return _mwe_patterns
+
+
+def _load_phrasal_verbs() -> frozenset[tuple[str, str]]:
+    """Load and memoize the curated phrasal-verb set from `data/phrasal_verbs.txt`.
+
+    Each non-comment, non-blank line is split on whitespace; only lines that
+    yield exactly two lowercase tokens are kept, as `(verb, particle)` tuples.
+    Malformed lines are skipped silently. The result is cached module-wide.
+    """
+    global _phrasal_verbs
+    if _phrasal_verbs is None:
+        path = _phrasal_verbs_path()
+        pairs: set[tuple[str, str]] = set()
+        with path.open(encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                words = line.lower().split()
+                if len(words) == 2:
+                    pairs.add((words[0], words[1]))
+        _phrasal_verbs = frozenset(pairs)
+    return _phrasal_verbs
 
 
 def _get_mwe_matcher() -> PhraseMatcher:
@@ -191,12 +224,109 @@ def mark_mwe(doc: Doc, tokens: list[Token], units: list[Unit]) -> None:
         next_id += 1
 
 
-def analyze(text: str) -> tuple[list[Token], list[Unit]]:
-    """Run the full M1.1 + M1.2 + M1.3 pipeline over `text`.
+def mark_phrasal(doc: Doc, tokens: list[Token], units: list[Unit]) -> None:
+    """Detect contiguous and split phrasal verbs, appending matching `Unit`s in place.
 
-    Returns ``(tokens, units)``: a lossless `Token` list with `translatable`
-    and `unit_id` populated, plus the list of `Unit(kind="mwe")` entries
-    produced by the MWE matcher.
+    Runs after `mark_mwe`; tokens already claimed by an MWE (``unit_id is not
+    None``) are skipped so MWEs win on conflict. Two passes:
+
+    * **Contiguous.** For each adjacent pair ``(tokens[i], tokens[i+1])`` where
+      the left is ``VERB`` and the right is ``ADP`` / ``ADV`` / ``PART``, look
+      up ``(verb_lemma, particle_lemma)`` in the phrasal-verb set. On a hit we
+      emit a single ``Unit(kind="phrasal")`` over ``[i, i+1]`` and advance past
+      the particle so it can't be reused.
+    * **Split.** For each spaCy token ``t`` with ``dep_ == "prt"`` whose head
+      ``v`` sits strictly before ``t`` with at least one intervening token, we
+      emit **two** ``Unit(kind="split_phrasal")`` entries (one per token) that
+      share the same freshly-allocated ``pair_id``. Both units get
+      ``is_split_pv=True`` and the canonical ``"<verb> <particle>"`` lemma.
+
+    ``pair_id`` uses its own counter, independent of ``Unit.id``. Pathological
+    orderings (particle before verb) are skipped defensively — standard English
+    word order guarantees the verb comes first.
+    """
+    phrasal_set = _load_phrasal_verbs()
+    next_unit_id = max((u.id for u in units), default=-1) + 1
+    next_pair_id = max((u.pair_id for u in units if u.pair_id is not None), default=-1) + 1
+
+    # --- Contiguous pass --------------------------------------------------
+    i = 0
+    n = len(tokens)
+    while i < n - 1:
+        if tokens[i].unit_id is not None or tokens[i + 1].unit_id is not None:
+            i += 1
+            continue
+        verb_tok = doc[i]
+        part_tok = doc[i + 1]
+        if verb_tok.pos_ != "VERB" or part_tok.pos_ not in _PARTICLE_POS:
+            i += 1
+            continue
+        key = (verb_tok.lemma_.lower(), part_tok.lemma_.lower())
+        if key not in phrasal_set:
+            i += 1
+            continue
+        unit = Unit(
+            id=next_unit_id,
+            token_ids=[i, i + 1],
+            lemma=f"{key[0]} {key[1]}",
+            kind="phrasal",
+        )
+        units.append(unit)
+        tokens[i].unit_id = unit.id
+        tokens[i + 1].unit_id = unit.id
+        next_unit_id += 1
+        i += 2
+
+    # --- Split pass -------------------------------------------------------
+    for t in doc:
+        if t.dep_ != "prt":
+            continue
+        v = t.head
+        # Standard English word order puts the verb first; skip pathological
+        # cases where the particle precedes its head. Contiguous adjacency is
+        # already handled by the pass above.
+        if t.i <= v.i + 1:
+            continue
+        if tokens[v.i].unit_id is not None or tokens[t.i].unit_id is not None:
+            continue
+        key = (v.lemma_.lower(), t.lemma_.lower())
+        if key not in phrasal_set:
+            continue
+        pair_id = next_pair_id
+        lemma = f"{key[0]} {key[1]}"
+        unit_a = Unit(
+            id=next_unit_id,
+            token_ids=[v.i],
+            lemma=lemma,
+            kind="split_phrasal",
+            is_split_pv=True,
+            pair_id=pair_id,
+        )
+        units.append(unit_a)
+        tokens[v.i].unit_id = unit_a.id
+        tokens[v.i].pair_id = pair_id
+        next_unit_id += 1
+        unit_b = Unit(
+            id=next_unit_id,
+            token_ids=[t.i],
+            lemma=lemma,
+            kind="split_phrasal",
+            is_split_pv=True,
+            pair_id=pair_id,
+        )
+        units.append(unit_b)
+        tokens[t.i].unit_id = unit_b.id
+        tokens[t.i].pair_id = pair_id
+        next_unit_id += 1
+        next_pair_id += 1
+
+
+def analyze(text: str) -> tuple[list[Token], list[Unit]]:
+    """Run the full M1.1 + M1.2 + M1.3 + M1.4 pipeline over `text`.
+
+    Returns ``(tokens, units)``: a lossless `Token` list with `translatable`,
+    `unit_id`, and (for split phrasal verbs) `pair_id` populated, plus the
+    list of `Unit` entries produced by the MWE and phrasal-verb passes.
     """
     nlp = get_nlp()
     doc = nlp(text)
@@ -204,6 +334,7 @@ def analyze(text: str) -> tuple[list[Token], list[Unit]]:
     mark_translatable(tokens)
     units: list[Unit] = []
     mark_mwe(doc, tokens, units)
+    mark_phrasal(doc, tokens, units)
     return tokens, units
 
 
