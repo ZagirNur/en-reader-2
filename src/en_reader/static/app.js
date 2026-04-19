@@ -10,6 +10,14 @@ const state = {
   userDict: {},
   // Library listing: undefined = not fetched, [] = fetched-and-empty, array = loaded.
   books: undefined,
+  // Scroll-restore (M10.2). `targetPageIndex` and `targetOffset` are sourced
+  // from the server's /content response (`last_page_index` + `last_page_offset`)
+  // and drive the initial render + `restoreScroll()` pass. `restoring` stays
+  // true for the 2-second restore window so later milestones (M10.4) can skip
+  // progress saves while we're still nudging scrollTop into place.
+  targetPageIndex: 0,
+  targetOffset: 0,
+  restoring: false,
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -17,6 +25,11 @@ const state = {
 let _readerScrollHandler = null;
 let _readerLastScrollY = 0;
 let _readerScrollRafId = 0;
+// Scroll-restore ResizeObserver (M10.2). Kept at module scope so a mid-flight
+// navigation can disconnect it from `teardownReaderScroll()` instead of
+// waiting for the 2 s timeout to fire on a dead DOM.
+let _restoreRO = null;
+let _restoreTimeoutId = 0;
 
 function setState(patch) {
   const prevView = state.view;
@@ -39,6 +52,17 @@ function teardownReaderScroll() {
     _readerScrollRafId = 0;
   }
   _readerLastScrollY = 0;
+  // M10.2: drop any in-flight restore observer / timer so they don't fire
+  // against a reader DOM that's already been replaced by the library view.
+  if (_restoreRO) {
+    _restoreRO.disconnect();
+    _restoreRO = null;
+  }
+  if (_restoreTimeoutId) {
+    clearTimeout(_restoreTimeoutId);
+    _restoreTimeoutId = 0;
+  }
+  state.restoring = false;
 }
 
 // --- router ---
@@ -561,6 +585,91 @@ function findVisiblePageIndex() {
   return bestIdx;
 }
 
+// --- scroll restore (M10.2) ---
+// Scroll the window so the given page `section` is aligned such that
+// `section.height * offset` pixels have passed its top. Reads layout
+// synchronously (getBoundingClientRect + offsetHeight) because callers
+// have already awaited the relevant readiness signal.
+function scrollToOffset(section, offset) {
+  if (!section) return;
+  const rect = section.getBoundingClientRect();
+  const currentTop = rect.top + window.scrollY;
+  window.scrollTo(0, currentTop + section.offsetHeight * offset);
+}
+
+// Restore the reader's scroll position to `state.targetPageIndex` +
+// `state.targetOffset`. Runs a sequence of scrollTo passes gated on the
+// browser signals that can still change a page section's height after
+// first paint: fonts ready, images loaded, and any remaining layout
+// resizes. After a 2 s window we disconnect the ResizeObserver and clear
+// `state.restoring`, so subsequent user scrolls are treated as genuine.
+async function restoreScroll() {
+  const targetIdx = state.targetPageIndex;
+  const section = document.querySelector(
+    `.page[data-page-index="${CSS.escape(String(targetIdx))}"]`,
+  );
+  if (!section) {
+    state.restoring = false;
+    return;
+  }
+
+  // Pass 1 — synchronous, before any awaits.
+  scrollToOffset(section, state.targetOffset);
+
+  // Pass 2 — after fonts finish loading (Georgia is system, but a custom
+  // @font-face elsewhere could still shift metrics).
+  if (document.fonts && document.fonts.ready) {
+    try {
+      await document.fonts.ready;
+    } catch (_) {
+      /* ignore */
+    }
+    if (state.view !== "reader") return;
+    scrollToOffset(section, state.targetOffset);
+  }
+
+  // Pass 3 — after every <img> in the target section has resolved.
+  const imgs = section.querySelectorAll("img");
+  const imgPromises = Array.from(imgs).map((img) => {
+    if (img.complete) return Promise.resolve();
+    return new Promise((res) => {
+      img.addEventListener("load", res, { once: true });
+      img.addEventListener("error", res, { once: true });
+    });
+  });
+  if (imgPromises.length) {
+    await Promise.all(imgPromises);
+    if (state.view !== "reader") return;
+    scrollToOffset(section, state.targetOffset);
+  }
+
+  // Pass 4 — watch for further height shifts (lazy reflow, late layout)
+  // for a 2 s window. Any ResizeObserver tick re-runs scrollToOffset with
+  // the same offset so the user sees a single stable final position.
+  if (_restoreRO) {
+    _restoreRO.disconnect();
+    _restoreRO = null;
+  }
+  if (typeof ResizeObserver !== "undefined") {
+    _restoreRO = new ResizeObserver(() =>
+      scrollToOffset(section, state.targetOffset),
+    );
+    _restoreRO.observe(section);
+  }
+  if (_restoreTimeoutId) {
+    clearTimeout(_restoreTimeoutId);
+    _restoreTimeoutId = 0;
+  }
+  _restoreTimeoutId = setTimeout(() => {
+    if (_restoreRO) {
+      _restoreRO.disconnect();
+      _restoreRO = null;
+    }
+    _restoreTimeoutId = 0;
+    state.restoring = false;
+  }, 2000);
+}
+
 function renderReader() {
   const root = document.getElementById("root");
   if (state.currentBook === null) {
@@ -568,35 +677,67 @@ function renderReader() {
     const parsed = parseRoute(state.route);
     const bookId = parsed.bookId != null ? parsed.bookId : 1;
     root.innerHTML = `<div class="loader">Loading…</div>`;
-    // Pull the first 20 pages up-front; true lazy loading is M10.3.
-    // Fetch book metadata in parallel — /api/books/{id}/content doesn't
-    // include the title, so we look it up in /api/books. A metadata failure
-    // must NOT block the reader: we fall back to "Книга".
+    // M10.2 two-step open:
+    //   1. Fetch page 0 with limit=1 — cheap probe that also returns the
+    //      server-side `last_page_index` / `last_page_offset` / `total_pages`.
+    //   2. If `last_page_index > 0`, fetch that target page with limit=1.
+    //      Otherwise reuse meta.pages[0] as the target (no second RTT).
+    // Rationale: the /content API clamps `limit` to [1, 20] (no 0 allowed),
+    // so we can't ask for "just metadata". A single-page fetch is the
+    // minimum viable probe, and when the user was on page 0 we avoid the
+    // second call entirely.
+    // A /api/books metadata lookup runs in parallel (book title for header).
     Promise.all([
-      loadBookContent(bookId, 0, 20),
+      loadBookContent(bookId, 0, 1),
       apiGet("/api/books").catch(() => null),
     ])
-      .then(([data, books]) => {
-        if (state.view !== "reader") return;
+      .then(async ([meta, books]) => {
+        if (state.view !== "reader") return null;
+        const lastIdx = Number.isFinite(meta.last_page_index)
+          ? meta.last_page_index
+          : 0;
+        const lastOff = Number.isFinite(meta.last_page_offset)
+          ? meta.last_page_offset
+          : 0;
+        let targetPage;
+        if (lastIdx > 0) {
+          const second = await loadBookContent(bookId, lastIdx, 1);
+          if (state.view !== "reader") return null;
+          targetPage =
+            Array.isArray(second.pages) && second.pages.length
+              ? second.pages[0]
+              : null;
+        } else {
+          targetPage =
+            Array.isArray(meta.pages) && meta.pages.length
+              ? meta.pages[0]
+              : null;
+        }
         // Seed state.userDict from server, merging over any local state so
         // an in-flight click isn't clobbered by a stale server payload.
-        if (data && data.user_dict) {
-          state.userDict = { ...data.user_dict, ...state.userDict };
+        if (meta && meta.user_dict) {
+          state.userDict = { ...meta.user_dict, ...state.userDict };
         }
         let title = "Книга";
         if (Array.isArray(books)) {
-          const found = books.find((b) => b.id === data.book_id);
+          const found = books.find((b) => b.id === meta.book_id);
           if (found && found.title) title = found.title;
         }
         setState({
           currentBook: {
-            bookId: data.book_id,
+            bookId: meta.book_id,
             title,
-            totalPages: data.total_pages,
-            pages: data.pages || [],
-            userDict: data.user_dict || {},
+            totalPages: meta.total_pages,
+            pages: targetPage ? [targetPage] : [],
+            loadedFirstIndex: lastIdx,
+            loadedLastIndex: lastIdx,
+            userDict: meta.user_dict || {},
           },
+          targetPageIndex: lastIdx,
+          targetOffset: lastOff,
+          restoring: true,
         });
+        return null;
       })
       .catch((err) => setState({ view: "error", error: err.message }));
     return;
@@ -721,6 +862,14 @@ function renderReader() {
     main.querySelectorAll(sel).forEach((span) => {
       replaceWithTranslation(span, ru);
     });
+  }
+
+  // M10.2: kick off scroll restoration. `state.restoring` was set by the
+  // loader branch above; we honour it here so re-renders that don't carry
+  // a fresh restore intent (e.g. a userDict change mid-read) don't snap
+  // the viewport back to the target.
+  if (state.restoring) {
+    restoreScroll();
   }
 }
 
