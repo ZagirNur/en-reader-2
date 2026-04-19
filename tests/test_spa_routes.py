@@ -31,15 +31,22 @@ def test_deep_path_served_by_catch_all() -> None:
     assert '<div id="root">' in resp.text
 
 
-def test_api_demo_still_404_without_demo_file() -> None:
-    # demo.json is gitignored and not built here, so /api/demo must still 404
-    # (not be masked by the SPA fallback).
-    resp = client.get("/api/demo")
+def test_api_content_404_without_seeded_book() -> None:
+    # The autouse tmp_db fixture starts with an empty DB, so the content API
+    # must still 404 (not be masked by the SPA fallback).
+    resp = client.get("/api/books/1/content")
     assert resp.status_code == 404
 
 
 def test_unknown_api_path_returns_404() -> None:
     resp = client.get("/api/bogus")
+    assert resp.status_code == 404
+
+
+def test_legacy_demo_path_is_404() -> None:
+    # /api/demo was removed in M8.2; the catch-all must let this 404 (it
+    # starts with "api/").
+    resp = client.get("/api/demo")
     assert resp.status_code == 404
 
 

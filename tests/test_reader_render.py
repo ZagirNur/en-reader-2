@@ -2,8 +2,9 @@
 
 We can't run JS in pytest, but we can verify:
  - the static bundle ships the renderer (word spans, design tokens, Geist link),
- - /api/demo yields at least one phrasal unit on the phrasal fixture,
-   so the frontend walker has real split/multi-token content to exercise.
+ - /api/books/{id}/content yields at least one phrasal unit on the phrasal
+   fixture, so the frontend walker has real split/multi-token content to
+   exercise.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ def test_index_html_has_geist_font(client: TestClient) -> None:
 
 
 def test_demo_has_phrasal_unit(client: TestClient) -> None:
-    resp = client.get("/api/demo")
+    resp = client.get("/api/books/1/content?offset=0&limit=20")
     assert resp.status_code == 200
     body = resp.json()
 

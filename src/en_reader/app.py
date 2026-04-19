@@ -1,14 +1,13 @@
 """FastAPI skeleton for the en-reader dev server.
 
-Serves the most-recently-seeded book via ``/api/demo`` (read directly from
-SQLite — the static ``demo.json`` handoff was retired in M8.1) plus the
-static ``index.html`` stub. ``POST /api/translate`` (M4.1) wraps the
-Gemini-backed :func:`en_reader.translate.translate_one`. M5.1 added an
-in-memory user dictionary exposed at ``/api/dictionary`` and enriched the
-``/api/demo`` payload with ``user_dict`` plus per-page ``auto_unit_ids``.
-M6.1 moved dictionary storage to SQLite (see :mod:`en_reader.storage`) so it
-survives restarts; M8.1 extended the schema with ``books`` and ``pages`` and
-pointed ``/api/demo`` at the newest book.
+Serves the SPA shell plus a paginated book content API. ``POST /api/translate``
+(M4.1) wraps the Gemini-backed :func:`en_reader.translate.translate_one`. M5.1
+added an in-memory user dictionary exposed at ``/api/dictionary`` and enriched
+the reader payload with ``user_dict`` plus per-page ``auto_unit_ids``. M6.1
+moved dictionary storage to SQLite (see :mod:`en_reader.storage`) so it
+survives restarts; M8.1 extended the schema with ``books`` and ``pages``; M8.2
+replaced the legacy ``/api/demo`` shim with ``GET /api/books/{id}/content``
+(paginated via ``offset`` / ``limit``) plus a ``/cover`` stub.
 """
 
 from __future__ import annotations
@@ -61,24 +60,31 @@ def root() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
 
 
-@app.get("/api/demo")
-def api_demo() -> dict:
-    """Return the newest seeded book, enriched with ``user_dict``/``auto_unit_ids``.
+_CONTENT_MAX_LIMIT = 20
 
-    Thin shim over the books/pages tables until M8.2 introduces a real
-    library-scoped content API. 404s with a helpful message when the DB has
-    no books (fresh checkout, tests that forgot to seed, etc.).
+
+@app.get("/api/books/{book_id}/content")
+def api_book_content(book_id: int, offset: int = 0, limit: int = 1) -> dict:
+    """Return a slice of a book's pages plus the server-side dictionary.
+
+    ``offset`` / ``limit`` are zero-based; ``limit`` is hard-capped at
+    :data:`_CONTENT_MAX_LIMIT` (20) to keep Safari happy on big books. The
+    response shape is future-compatible with M10.1 reading-progress save:
+    ``last_page_index`` / ``last_page_offset`` ship as zeros today and will
+    carry real values once that task lands.
+
+    ``auto_unit_ids`` on each page lists the ids of units whose lemma is
+    present in the user dictionary — the frontend uses this to auto-highlight
+    already-translated words on first render.
     """
-    books = storage.book_list()
-    if not books:
-        raise HTTPException(
-            status_code=404,
-            detail="no books seeded; run `python scripts/seed.py <path-to-txt>` first",
-        )
-    # book_list() orders newest first; take the head.
-    newest = books[0]
-    pages = storage.pages_load_slice(newest.id, 0, newest.total_pages)
+    meta = storage.book_meta(book_id)
+    if meta is None:
+        raise HTTPException(status_code=404)
 
+    if limit > _CONTENT_MAX_LIMIT:
+        limit = _CONTENT_MAX_LIMIT
+
+    pages = storage.pages_load_slice(book_id, offset, limit)
     user_dict = storage.dict_all()
     user_dict_keys = set(user_dict.keys())
 
@@ -86,19 +92,38 @@ def api_demo() -> dict:
     for page in pages:
         page_dict = asdict(page)
         auto_ids: list[int] = []
-        for unit in page_dict.get("units", []):
-            lemma = (unit.get("lemma") or "").lower()
+        for unit in page.units:
+            lemma = (unit.lemma or "").lower()
             if lemma and lemma in user_dict_keys:
-                auto_ids.append(unit["id"])
+                auto_ids.append(unit.id)
         page_dict["auto_unit_ids"] = auto_ids
         page_payloads.append(page_dict)
 
     return {
-        "total_pages": newest.total_pages,
-        "book_id": newest.id,
+        "book_id": book_id,
+        "total_pages": meta.total_pages,
+        "last_page_index": 0,  # M10.1 will carry real progress.
+        "last_page_offset": 0.0,
         "pages": page_payloads,
         "user_dict": user_dict,
     }
+
+
+@app.get("/api/books/{book_id}/cover")
+def api_book_cover(book_id: int) -> FileResponse:
+    """Serve a book's cover image, if one was captured by the parser.
+
+    Until M12 adds real parsers, ``cover_path`` is always ``NULL`` and this
+    endpoint 404s — that's fine; the frontend falls back to a generated
+    placeholder tile.
+    """
+    meta = storage.book_meta(book_id)
+    if meta is None or not meta.cover_path:
+        raise HTTPException(status_code=404)
+    return FileResponse(
+        meta.cover_path,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.post("/api/translate", response_model=TranslateResponse)

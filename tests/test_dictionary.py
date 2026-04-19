@@ -5,7 +5,8 @@ Covers:
 * `GET /api/dictionary` returns current entries.
 * `DELETE /api/dictionary/{lemma}` is idempotent.
 * Lemma keys are normalized to lowercase.
-* `GET /api/demo` is enriched with `user_dict` and per-page `auto_unit_ids`.
+* `GET /api/books/{id}/content` is enriched with `user_dict` and per-page
+  `auto_unit_ids`.
 
 All LLM calls are monkeypatched — no network hits. The ``tmp_db``
 autouse fixture in ``conftest.py`` gives each test its own SQLite file.
@@ -114,12 +115,12 @@ def test_delete_is_case_insensitive() -> None:
     assert c.get("/api/dictionary").json() == {}
 
 
-# ---------- /api/demo enrichment ----------
+# ---------- content enrichment ----------
 
 
-def test_demo_includes_user_dict_and_auto_unit_ids(demo_client: TestClient) -> None:
+def test_content_includes_user_dict_and_auto_unit_ids(demo_client: TestClient) -> None:
     # Pick a lemma that actually appears on some page of the phrasal fixture.
-    base = demo_client.get("/api/demo").json()
+    base = demo_client.get("/api/books/1/content?offset=0&limit=20").json()
     assert "user_dict" in base and base["user_dict"] == {}
     for page in base["pages"]:
         assert page.get("auto_unit_ids") == []
@@ -141,7 +142,7 @@ def test_demo_includes_user_dict_and_auto_unit_ids(demo_client: TestClient) -> N
 
     storage.dict_add(target_lemma, "тест-перевод")
 
-    body = demo_client.get("/api/demo").json()
+    body = demo_client.get("/api/books/1/content?offset=0&limit=20").json()
     assert body["user_dict"] == {target_lemma: "тест-перевод"}
 
     matched_page = next(p for p in body["pages"] if p["page_index"] == target_page_index)

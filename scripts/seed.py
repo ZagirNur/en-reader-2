@@ -2,8 +2,8 @@
 
 Replaces the older ``scripts/build_demo.py`` — instead of emitting a static
 ``demo.json`` the seed now writes a real ``books`` row plus a gzip-compressed
-``pages`` row per page. The ``/api/demo`` shim serves the most-recently-seeded
-book until M8.2 ships a proper library API.
+``pages`` row per page. Served to the frontend via
+``GET /api/books/{id}/content`` (M8.2).
 
 Usage::
 

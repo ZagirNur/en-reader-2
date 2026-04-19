@@ -98,7 +98,7 @@ def test_seed_injects_images_and_positions(client: TestClient, tmp_path: Path) -
     book_id = seed_main(_FIXTURE_TXT, images_dir=images_dir)
     assert book_id >= 1
 
-    resp = client.get("/api/demo")
+    resp = client.get(f"/api/books/{book_id}/content?offset=0&limit=20")
     assert resp.status_code == 200
     body = resp.json()
     assert body.get("book_id") == book_id

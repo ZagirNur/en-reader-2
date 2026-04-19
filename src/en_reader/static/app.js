@@ -6,7 +6,7 @@ const state = {
   view: "loading",
   error: null,
   route: "/",
-  demo: null,
+  currentBook: null,
   userDict: {},
 };
 
@@ -16,25 +16,39 @@ function setState(patch) {
 }
 
 // --- router ---
+const BOOK_ROUTE_RE = /^\/books\/(\d+)$/;
+
 function parseRoute(path) {
   if (path === "/") return { view: "library" };
-  if (path === "/reader") return { view: "reader" };
+  // Legacy back-compat: /reader → first seeded book.
+  if (path === "/reader") return { view: "reader", bookId: 1 };
+  const m = BOOK_ROUTE_RE.exec(path);
+  if (m) return { view: "reader", bookId: Number(m[1]) };
   return { view: "error" };
 }
 
 function navigate(path) {
   history.pushState({}, "", path);
-  const { view } = parseRoute(path);
-  const patch = { route: path, view };
-  if (view === "error") patch.error = `Unknown route: ${path}`;
+  const parsed = parseRoute(path);
+  const patch = { route: path, view: parsed.view };
+  if (parsed.view === "error") patch.error = `Unknown route: ${path}`;
+  // A navigation to a different book should drop any previously-loaded content.
+  if (parsed.view === "reader") {
+    const prev = state.currentBook;
+    if (!prev || prev.bookId !== parsed.bookId) patch.currentBook = null;
+  }
   setState(patch);
 }
 
 function onPopState() {
   const path = location.pathname;
-  const { view } = parseRoute(path);
-  const patch = { route: path, view };
-  if (view === "error") patch.error = `Unknown route: ${path}`;
+  const parsed = parseRoute(path);
+  const patch = { route: path, view: parsed.view };
+  if (parsed.view === "error") patch.error = `Unknown route: ${path}`;
+  if (parsed.view === "reader") {
+    const prev = state.currentBook;
+    if (!prev || prev.bookId !== parsed.bookId) patch.currentBook = null;
+  }
   setState(patch);
 }
 
@@ -62,11 +76,20 @@ async function apiDelete(path) {
   }
 }
 
+// Fetch a slice of a book's pages via the M8.2 content API. `limit` is capped
+// server-side at 20 regardless of what we ask for.
+async function loadBookContent(bookId, offset = 0, limit = 1) {
+  return apiGet(
+    `/api/books/${encodeURIComponent(bookId)}/content` +
+      `?offset=${offset}&limit=${limit}`,
+  );
+}
+
 // --- views ---
 function renderLibrary() {
   const root = document.getElementById("root");
   root.innerHTML = `<h1>Library</h1><button id="open-demo">Open demo</button>`;
-  document.getElementById("open-demo").onclick = () => navigate("/reader");
+  document.getElementById("open-demo").onclick = () => navigate("/books/1");
 }
 
 // --- reader render ---
@@ -91,7 +114,7 @@ function buildPageSection(page) {
   const units = page.units || [];
   const text = page.text || "";
   const pageImages = (page.images || []).slice().sort((a, b) => a.position - b.position);
-  const bookId = (state.demo && state.demo.book_id != null) ? state.demo.book_id : 1;
+  const bookId = (state.currentBook && state.currentBook.bookId != null) ? state.currentBook.bookId : 1;
 
   // token local index → unit object
   const unitByToken = new Map();
@@ -296,18 +319,28 @@ function applyAutoTranslation(pageSection, unitId, ru) {
 
 function renderReader() {
   const root = document.getElementById("root");
-  if (state.demo === null) {
+  if (state.currentBook === null) {
+    // Derive bookId from the current route (default 1 for legacy /reader).
+    const parsed = parseRoute(state.route);
+    const bookId = parsed.bookId != null ? parsed.bookId : 1;
     root.innerHTML = `<div class="loader">Loading…</div>`;
-    apiGet("/api/demo")
+    // Pull the first 20 pages up-front; true lazy loading is M10.3.
+    loadBookContent(bookId, 0, 20)
       .then((data) => {
-        if (state.view === "reader") {
-          // Seed state.userDict from server, merging over any local state so
-          // an in-flight click isn't clobbered by a stale server payload.
-          if (data && data.user_dict) {
-            state.userDict = { ...data.user_dict, ...state.userDict };
-          }
-          setState({ demo: data });
+        if (state.view !== "reader") return;
+        // Seed state.userDict from server, merging over any local state so
+        // an in-flight click isn't clobbered by a stale server payload.
+        if (data && data.user_dict) {
+          state.userDict = { ...data.user_dict, ...state.userDict };
         }
+        setState({
+          currentBook: {
+            bookId: data.book_id,
+            totalPages: data.total_pages,
+            pages: data.pages || [],
+            userDict: data.user_dict || {},
+          },
+        });
       })
       .catch((err) => setState({ view: "error", error: err.message }));
     return;
@@ -324,7 +357,7 @@ function renderReader() {
   main.appendChild(backTop);
 
   const pageSections = [];
-  for (const page of state.demo.pages) {
+  for (const page of state.currentBook.pages) {
     const section = buildPageSection(page);
     pageSections.push({ page, section });
     main.appendChild(section);

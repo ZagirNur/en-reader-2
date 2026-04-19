@@ -70,7 +70,7 @@ def test_style_css_has_sheet_and_toast_rules() -> None:
 
 
 def test_demo_split_phrasal_has_shared_pair_id(client: TestClient) -> None:
-    resp = client.get("/api/demo")
+    resp = client.get("/api/books/1/content?offset=0&limit=20")
     assert resp.status_code == 200
     body = resp.json()
 
