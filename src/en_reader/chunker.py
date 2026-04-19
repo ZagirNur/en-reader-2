@@ -98,9 +98,17 @@ def _pack(sentences: list[tuple[int, int, int, bool]]) -> list[tuple[int, int]]:
             # Below floor — keep growing regardless of overshoot risk.
             buf_end = sent_end
             buf_words += sent_words
-            # Still flush on paragraph end if we crossed the floor by adding
-            # this sentence; otherwise we'd never close small-paragraph pages.
-            if buf_words >= _MIN_WORDS and para_end:
+            if buf_words > _MAX_WORDS:
+                # A huge sentence dragged us past the ceiling before we hit
+                # the floor; flush the oversized page so ≤1000 stays the
+                # invariant everywhere else.
+                logger.warning("Oversized page: %d words", buf_words)
+                pages.append((buf_start, buf_end))
+                buf_start, buf_end, buf_words = None, 0, 0
+            elif buf_words >= _MIN_WORDS and para_end:
+                # Flush on paragraph end if we crossed the floor by adding
+                # this sentence; otherwise we'd never close small-paragraph
+                # pages.
                 pages.append((buf_start, buf_end))
                 buf_start, buf_end, buf_words = None, 0, 0
             continue
@@ -171,14 +179,23 @@ def chunk(tokens: list[Token], units: list[Unit], full_text: str) -> list[Page]:
         page_start_char = first_tok.idx_in_text
         page_end_char = last_tok.idx_in_text + len(last_tok.text)
         page_text = full_text[page_start_char:page_end_char].rstrip()
+        # Any trailing whitespace-only tokens (spaCy's `SPACE` with "\n\n" etc.)
+        # now sit past the rstripped boundary; filter them out so every kept
+        # token's rebased `idx_in_text + len(text)` fits within `page_text`.
+        effective_end_char = page_start_char + len(page_text)
+        kept_globals = [
+            g
+            for g in range(g_start, g_end)
+            if tokens[g].idx_in_text + len(tokens[g].text) <= effective_end_char
+        ]
 
         # Deep-copy tokens with rebased idx_in_text.
         page_tokens: list[Token] = [
             replace(tokens[g], idx_in_text=tokens[g].idx_in_text - page_start_char)
-            for g in range(g_start, g_end)
+            for g in kept_globals
         ]
         # Global -> local token index map for Unit remapping.
-        g_to_local: dict[int, int] = {g: local for local, g in enumerate(range(g_start, g_end))}
+        g_to_local: dict[int, int] = {g: local for local, g in enumerate(kept_globals)}
 
         # Partition units by whether all their token_ids live in this page.
         page_units: list[Unit] = []
@@ -186,7 +203,8 @@ def chunk(tokens: list[Token], units: list[Unit], full_text: str) -> list[Page]:
             if not u.token_ids:
                 continue
             pages_touched = {global_to_page.get(t) for t in u.token_ids}
-            if len(pages_touched) == 1 and p_idx in pages_touched:
+            all_kept = all(t in g_to_local for t in u.token_ids)
+            if len(pages_touched) == 1 and p_idx in pages_touched and all_kept:
                 local_ids = [g_to_local[t] for t in u.token_ids]
                 page_units.append(replace(u, token_ids=local_ids))
             elif p_idx in pages_touched and len(pages_touched) > 1:

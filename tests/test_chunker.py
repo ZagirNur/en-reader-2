@@ -104,6 +104,31 @@ def test_oversized_single_sentence(caplog: pytest.LogCaptureFixture) -> None:
     assert any("Oversized page" in rec.message for rec in caplog.records)
 
 
+def test_underfloor_plus_huge_sentence_warns(caplog: pytest.LogCaptureFixture) -> None:
+    # A short lead-in (under the 100-word floor) followed by a 1200-word
+    # sentence must still emit the oversized warning — the under-floor branch
+    # shouldn't swallow it.
+    text = "Short sentence here. " + ("word " * 1200).rstrip() + "."
+    tokens, units = analyze(text)
+
+    with caplog.at_level(logging.WARNING, logger="en_reader.chunker"):
+        pages = chunk(tokens, units, text)
+
+    assert len(pages) == 1
+    assert any("Oversized page" in rec.message for rec in caplog.records)
+
+
+def test_token_offsets_consistent_on_long_fixture() -> None:
+    # After rstrip, every kept token's rebased idx_in_text must still resolve
+    # back to the same substring inside page.text.
+    text = (FIXTURES / "long.txt").read_text(encoding="utf-8")
+    tokens, units = analyze(text)
+    pages = chunk(tokens, units, text)
+    for p in pages:
+        for tok in p.tokens:
+            assert p.text[tok.idx_in_text : tok.idx_in_text + len(tok.text)] == tok.text
+
+
 def test_concat_invariant() -> None:
     text = (
         "The quiet village sat between two hills and a slow river. "
