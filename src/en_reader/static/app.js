@@ -35,9 +35,13 @@ function setState(patch) {
   const prevView = state.view;
   Object.assign(state, patch);
   // Leaving the reader view? Tear down the scroll listener set up by
-  // renderReader so we don't keep reacting to scrolls on the library.
+  // renderReader so we don't keep reacting to scrolls on the library. We
+  // also abandon any in-flight restore: we only reset `state.restoring`
+  // here (not inside teardownReaderScroll) so a same-view re-render that
+  // calls teardown defensively doesn't clobber the freshly-set flag.
   if (prevView === "reader" && state.view !== "reader") {
     teardownReaderScroll();
+    state.restoring = false;
   }
   render();
 }
@@ -53,7 +57,11 @@ function teardownReaderScroll() {
   }
   _readerLastScrollY = 0;
   // M10.2: drop any in-flight restore observer / timer so they don't fire
-  // against a reader DOM that's already been replaced by the library view.
+  // against a reader DOM that's already been replaced. The restoring
+  // flag itself stays — setState's view-transition branch resets it on
+  // actual navigation, and restoreScroll() flips it off after the 2 s
+  // window. This lets a same-view re-render tear down stale observers
+  // without cancelling the pending restore intent.
   if (_restoreRO) {
     _restoreRO.disconnect();
     _restoreRO = null;
@@ -62,7 +70,6 @@ function teardownReaderScroll() {
     clearTimeout(_restoreTimeoutId);
     _restoreTimeoutId = 0;
   }
-  state.restoring = false;
 }
 
 // --- router ---
