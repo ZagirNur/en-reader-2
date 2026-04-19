@@ -11,11 +11,13 @@ Design choices:
   and SQLite with ``check_same_thread=False`` is perfectly happy being
   shared across request threads. Opening a new connection per request
   is expensive and would churn the WAL.
-* **Autocommit + explicit transactions.** We pass ``isolation_level=None``
-  to ``sqlite3.connect`` so plain ``execute()`` calls commit immediately.
-  Multi-statement migrations are wrapped in ``with conn:`` which issues
-  ``BEGIN``/``COMMIT`` (or ``ROLLBACK`` on error) via the context manager.
-  This keeps single-statement CRUD cheap and migrations atomic.
+* **Default isolation + explicit transactions.** We keep pysqlite's
+  default deferred-transaction mode so ``with conn:`` actually wraps
+  ``BEGIN ... COMMIT/ROLLBACK`` around migrations. Single-statement CRUD
+  calls commit via the ``with conn:`` block or rely on the implicit
+  commit at the end of the next DDL — in practice each DAO call below
+  issues one statement, and the context manager in ``migrate()`` is the
+  only place we need true atomicity.
 * **WAL journal mode.** More resilient to concurrent readers and
   survives unclean shutdowns better than the default rollback journal.
 * **Lemmas are lowercased at the boundary.** The ``lemma`` column has a
@@ -28,7 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -52,7 +54,6 @@ def get_db() -> sqlite3.Connection:
         conn = sqlite3.connect(
             str(path),
             check_same_thread=False,
-            isolation_level=None,  # autocommit; use `with conn:` for explicit txns
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -84,7 +85,9 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
 def migrate() -> None:
     """Apply any pending schema migrations. Idempotent."""
     conn = get_db()
-    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    with conn:
+        # Pre-migration bootstrap: the version-tracking table itself.
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     cur = conn.execute("SELECT value FROM meta WHERE key='schema_version'")
     row = cur.fetchone()
     current = int(row["value"]) if row else 0
@@ -109,17 +112,23 @@ def dict_add(lemma: str, translation: str) -> None:
     First write wins — updates require an explicit ``dict_remove`` + add.
     """
     conn = get_db()
-    conn.execute(
-        "INSERT OR IGNORE INTO user_dictionary(lemma, translation, first_seen_at) "
-        "VALUES(?, ?, ?)",
-        (lemma.lower(), translation, datetime.utcnow().isoformat()),
-    )
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_dictionary(lemma, translation, first_seen_at) "
+            "VALUES(?, ?, ?)",
+            (
+                lemma.lower(),
+                translation,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
 
 
 def dict_remove(lemma: str) -> None:
     """Delete the row for ``lemma`` (case-insensitive). No error if missing."""
     conn = get_db()
-    conn.execute("DELETE FROM user_dictionary WHERE lemma = ?", (lemma.lower(),))
+    with conn:
+        conn.execute("DELETE FROM user_dictionary WHERE lemma = ?", (lemma.lower(),))
 
 
 def dict_get(lemma: str) -> str | None:
