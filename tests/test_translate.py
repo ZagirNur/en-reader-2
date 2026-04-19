@@ -115,6 +115,7 @@ def test_translate_endpoint_success(monkeypatch: pytest.MonkeyPatch) -> None:
         json={
             "unit_text": "ominous",
             "sentence": "She whispered an ominous warning.",
+            "lemma": "ominous",
         },
     )
     assert resp.status_code == 200
@@ -132,7 +133,7 @@ def test_translate_endpoint_502_on_TranslateError(
     client = TestClient(app)
     resp = client.post(
         "/api/translate",
-        json={"unit_text": "ominous", "sentence": "She whispered."},
+        json={"unit_text": "ominous", "sentence": "She whispered.", "lemma": "ominous"},
     )
     assert resp.status_code == 502
     assert "forced" in resp.json()["detail"]
@@ -142,6 +143,6 @@ def test_translate_endpoint_422_on_empty_unit() -> None:
     client = TestClient(app)
     resp = client.post(
         "/api/translate",
-        json={"unit_text": "", "sentence": "She whispered."},
+        json={"unit_text": "", "sentence": "She whispered.", "lemma": "ominous"},
     )
     assert resp.status_code == 422

@@ -55,6 +55,13 @@ async function apiPost(path, body) {
   return res.json();
 }
 
+async function apiDelete(path) {
+  const res = await fetch(path, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+}
+
 // --- views ---
 function renderLibrary() {
   const root = document.getElementById("root");
@@ -189,13 +196,27 @@ function buildPageSection(page) {
   return section;
 }
 
+function applyAutoTranslation(pageSection, unitId, ru) {
+  const escaped = CSS.escape(String(unitId));
+  pageSection.querySelectorAll(`.word[data-unit-id="${escaped}"]`).forEach((span) => {
+    replaceWithTranslation(span, ru);
+  });
+}
+
 function renderReader() {
   const root = document.getElementById("root");
   if (state.demo === null) {
     root.innerHTML = `<div class="loader">Loading…</div>`;
     apiGet("/api/demo")
       .then((data) => {
-        if (state.view === "reader") setState({ demo: data });
+        if (state.view === "reader") {
+          // Seed state.userDict from server, merging over any local state so
+          // an in-flight click isn't clobbered by a stale server payload.
+          if (data && data.user_dict) {
+            state.userDict = { ...data.user_dict, ...state.userDict };
+          }
+          setState({ demo: data });
+        }
       })
       .catch((err) => setState({ view: "error", error: err.message }));
     return;
@@ -211,8 +232,11 @@ function renderReader() {
   backTop.onclick = () => navigate("/");
   main.appendChild(backTop);
 
+  const pageSections = [];
   for (const page of state.demo.pages) {
-    main.appendChild(buildPageSection(page));
+    const section = buildPageSection(page);
+    pageSections.push({ page, section });
+    main.appendChild(section);
   }
 
   const backBottom = document.createElement("button");
@@ -224,6 +248,30 @@ function renderReader() {
   main.addEventListener("click", onWordTap);
 
   root.appendChild(main);
+
+  // Apply auto-translations post-render. Pass 1: per-page auto_unit_ids
+  // (Units whose lemma matched the server-side dictionary).
+  for (const { page, section } of pageSections) {
+    const autoIds = page.auto_unit_ids || [];
+    for (const unitId of autoIds) {
+      // Look up the unit's lemma from the page payload so we can find the
+      // right translation in state.userDict (keys are lowercased lemmas).
+      const unit = (page.units || []).find((u) => u.id === unitId);
+      if (!unit) continue;
+      const ru = state.userDict[unit.lemma.toLowerCase()];
+      if (!ru) continue;
+      applyAutoTranslation(section, unitId, ru);
+    }
+  }
+  // Pass 2: sweep plain (non-unit) `.word[data-lemma=...]` spans across the
+  // whole reader once, for every lemma currently in state.userDict.
+  for (const lemma of Object.keys(state.userDict)) {
+    const ru = state.userDict[lemma];
+    const sel = `.word[data-lemma="${CSS.escape(lemma)}"]:not(.translated)`;
+    main.querySelectorAll(sel).forEach((span) => {
+      replaceWithTranslation(span, ru);
+    });
+  }
 }
 
 function renderLoading() {
@@ -278,7 +326,11 @@ async function translateAndReplace(span) {
 
   let ru;
   try {
-    const r = await apiPost("/api/translate", { unit_text: unitText, sentence });
+    const r = await apiPost("/api/translate", {
+      unit_text: unitText,
+      sentence,
+      lemma,
+    });
     ru = r.ru;
   } catch (err) {
     span.classList.remove("loading");
@@ -342,6 +394,12 @@ function revertTranslation(lemma) {
   }
 
   delete state.userDict[lemma];
+
+  // Fire-and-forget server sync. A network failure here must NOT block the
+  // client-side revert that already happened above.
+  apiDelete(`/api/dictionary/${encodeURIComponent(lemma)}`).catch((err) => {
+    console.warn("DELETE /api/dictionary failed", err);
+  });
 }
 
 // --- bottom sheet (M4.2 minimal; M16.2 later) ---

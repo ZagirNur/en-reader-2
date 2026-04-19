@@ -107,7 +107,11 @@ def test_translate_endpoint_success_for_m4_2(monkeypatch: pytest.MonkeyPatch) ->
     client = TestClient(app)
     resp = client.post(
         "/api/translate",
-        json={"unit_text": "ominous", "sentence": "She whispered an ominous warning."},
+        json={
+            "unit_text": "ominous",
+            "sentence": "She whispered an ominous warning.",
+            "lemma": "ominous",
+        },
     )
     assert resp.status_code == 200
     assert resp.json() == {"ru": "зловещий"}
