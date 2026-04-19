@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from .models import BookMeta, Page, PageImage, Token, Unit
+from .models import BookMeta, Page, PageImage, Token, Unit, User
 
 if TYPE_CHECKING:
     from .parsers import ParsedBook
@@ -739,6 +739,68 @@ def pages_load_slice(book_id: int, offset: int, limit: int) -> list[Page]:
         (book_id, limit, offset),
     )
     return [_row_to_page(row) for row in cur.fetchall()]
+
+
+# ---------- users DAO (M11.2) ----------
+
+
+def _row_to_user(row: sqlite3.Row) -> User:
+    return User(
+        id=row["id"],
+        email=row["email"],
+        password_hash=row["password_hash"],
+        created_at=row["created_at"],
+        current_book_id=row["current_book_id"],
+    )
+
+
+def user_create(email: str, password_hash: str) -> int:
+    """Insert a new user row and return its id.
+
+    The caller is expected to have already normalised ``email`` via
+    :func:`en_reader.auth.normalize_email` — this DAO stores it verbatim.
+    On UNIQUE-constraint violation (duplicate email) raises
+    :class:`en_reader.auth.EmailExistsError`. We lazy-import the exception
+    inside the function to dodge the circular import between ``auth`` and
+    ``storage`` (``auth`` doesn't touch storage, but the app module pulls
+    in both).
+    """
+    from .auth import EmailExistsError  # lazy: avoid import cycle
+
+    conn = get_db()
+    created_at = datetime.now(timezone.utc).isoformat()
+    try:
+        with conn:
+            cur = conn.execute(
+                "INSERT INTO users(email, password_hash, created_at) VALUES(?, ?, ?)",
+                (email, password_hash, created_at),
+            )
+    except sqlite3.IntegrityError as e:
+        raise EmailExistsError(email) from e
+    return int(cur.lastrowid)
+
+
+def user_by_email(email: str) -> User | None:
+    """Return the :class:`User` with this ``email`` or ``None``."""
+    conn = get_db()
+    cur = conn.execute(
+        "SELECT id, email, password_hash, created_at, current_book_id "
+        "FROM users WHERE email = ?",
+        (email,),
+    )
+    row = cur.fetchone()
+    return _row_to_user(row) if row else None
+
+
+def user_by_id(user_id: int) -> User | None:
+    """Return the :class:`User` with this ``id`` or ``None``."""
+    conn = get_db()
+    cur = conn.execute(
+        "SELECT id, email, password_hash, created_at, current_book_id " "FROM users WHERE id = ?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    return _row_to_user(row) if row else None
 
 
 # ---------- test helpers ----------

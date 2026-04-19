@@ -78,6 +78,22 @@ class Page:
 
 
 @dataclass
+class User:
+    """A row from the ``users`` table (M11.1 / M11.2).
+
+    Holds the canonical lowercased ``email``, the bcrypt ``password_hash``
+    (or the ``__migration_placeholder__`` sentinel for the seed row), and
+    the per-user ``current_book_id`` pointer introduced in M11.1.
+    """
+
+    id: int
+    email: str
+    password_hash: str
+    created_at: str
+    current_book_id: int | None
+
+
+@dataclass
 class BookMeta:
     """Library-level book metadata, mirroring the ``books`` table row (M8.1).
 

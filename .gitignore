@@ -17,6 +17,10 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 
+# Persistent SECRET_KEY (M11.2) — generated once on first start, must
+# never enter source control. File is chmod 0o600.
+data/.secret_key
+
 # Build / packaging artifacts
 *.egg-info/
 build/

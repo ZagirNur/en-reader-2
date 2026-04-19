@@ -13,18 +13,28 @@ replaced the legacy ``/api/demo`` shim with ``GET /api/books/{id}/content``
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
 
 from en_reader import storage
+from en_reader.auth import (
+    auth_ratelimit,
+    check_password,
+    hash_password,
+    normalize_email,
+)
 from en_reader.metrics import counters
+from en_reader.models import User
 from en_reader.translate import TranslateError, translate_one
 
 load_dotenv()
@@ -32,6 +42,28 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _secret_key() -> str:
+    """Return a persistent SECRET_KEY, creating it on first call.
+
+    Backed by ``data/.secret_key`` with mode 0o600 — we want the key to
+    survive a restart (otherwise every deploy invalidates every live
+    session) but never to land in source control or become world-readable.
+    If the file exists we trust its contents verbatim; otherwise we mint
+    a fresh 32-byte URL-safe token.
+    """
+    path = Path("data/.secret_key")
+    if path.exists():
+        return path.read_text().strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = secrets.token_urlsafe(32)
+    path.write_text(key)
+    os.chmod(path, 0o600)
+    return key
+
+
+SECRET_KEY = _secret_key()
 
 
 @asynccontextmanager
@@ -42,6 +74,21 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
 
 app = FastAPI(title="en-reader", lifespan=lifespan)
+# SessionMiddleware goes on before any routes run — Starlette walks the
+# middleware stack on every request, so position doesn't affect route
+# resolution, only the visible order of request/response callbacks.
+# ``https_only`` only flips on in prod because the dev server is plain HTTP.
+# Starlette's SessionMiddleware always sets HttpOnly internally (the JS
+# side has no business reading this cookie), so no ``http_only`` kwarg
+# is needed or accepted on current Starlette versions.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    session_cookie="sess",
+    max_age=60 * 60 * 24 * 30,  # 30 days
+    same_site="lax",
+    https_only=os.getenv("ENV") == "prod",
+)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
@@ -66,6 +113,15 @@ class BookListItem(BaseModel):
 class ProgressIn(BaseModel):
     last_page_index: int = Field(ge=0)
     last_page_offset: float = Field(ge=0.0, le=1.0)
+
+
+class Credentials(BaseModel):
+    # Pydantic runs field validation before the route body, so ``password``
+    # short-circuits to 422 at min_length=8; we keep email as plain ``str``
+    # and normalize inside the handler so bad-email errors come out as 400
+    # (our domain-level "invalid email" response) rather than 422.
+    email: str
+    password: str = Field(min_length=8)
 
 
 class CurrentBookIn(BaseModel):
@@ -284,6 +340,116 @@ def api_set_current_book(p: CurrentBookIn) -> Response:
             raise HTTPException(status_code=404)
     storage.current_book_set(p.book_id)
     return Response(status_code=204)
+
+
+# ---------- auth routes (M11.2) ----------
+
+
+def _client_ip(request: Request) -> str:
+    """Return the client IP for rate limiting, falling back to ``"unknown"``.
+
+    Starlette's ``TestClient`` populates ``request.client`` in most cases,
+    but a few paths (ASGI lifespan, custom transports) can leave it
+    ``None``. We don't want the rate limiter to blow up there, so we
+    bucket all such requests under a single ``"unknown"`` key.
+    """
+    client = request.client
+    if client is None or not client.host:
+        return "unknown"
+    return client.host
+
+
+def get_current_user(request: Request) -> User:
+    """FastAPI dependency: resolve the signed-in user or 401.
+
+    Not applied to any route in M11.2 — the per-route isolation lands in
+    M11.3. Exposed here so handlers can declare
+    ``user: User = Depends(get_current_user)`` once that task turns on.
+    """
+    uid = request.session.get("user_id")
+    if not uid:
+        raise HTTPException(status_code=401)
+    user = storage.user_by_id(uid)
+    if user is None:
+        # Session references a deleted user — clear it so the client
+        # gets a clean 401 on the next call instead of a stale cookie.
+        request.session.clear()
+        raise HTTPException(status_code=401)
+    return user
+
+
+@app.post("/auth/signup")
+def auth_signup(cred: Credentials, request: Request) -> dict:
+    """Create an account and log the user in.
+
+    Rate-limit check runs *before* any DB work so a flood can't burn
+    cycles on bcrypt. Email validation errors surface as 400 (invalid
+    input); duplicate email returns 409 so the frontend can switch to a
+    "already registered — sign in?" prompt. On success the session
+    cookie is written by SessionMiddleware on response.
+    """
+    if not auth_ratelimit.check(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="too many attempts")
+    try:
+        email = normalize_email(cred.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if storage.user_by_email(email):
+        raise HTTPException(status_code=409, detail="email exists")
+    user_id = storage.user_create(email, hash_password(cred.password))
+    request.session["user_id"] = user_id
+    return {"email": email}
+
+
+@app.post("/auth/login")
+def auth_login(cred: Credentials, request: Request) -> dict:
+    """Verify credentials and set the session.
+
+    Rate-limit is the very first check so a brute-force attempt hits the
+    429 ceiling before any bcrypt verify. We deliberately return the same
+    401 for "user not found" and "wrong password" so attackers can't
+    enumerate valid emails. ``check_password`` also rejects the
+    ``__migration_placeholder__`` sentinel, which means the seed row can
+    never be logged into.
+    """
+    if not auth_ratelimit.check(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="too many attempts")
+    try:
+        email = normalize_email(cred.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    user = storage.user_by_email(email)
+    if user is None or not check_password(cred.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    request.session["user_id"] = user.id
+    return {"email": user.email}
+
+
+@app.post("/auth/logout")
+def auth_logout(request: Request) -> Response:
+    """Clear the session cookie. Idempotent — 200 whether or not we had one."""
+    request.session.clear()
+    return Response(status_code=200)
+
+
+@app.get("/auth/me")
+def auth_me(request: Request) -> dict:
+    """Return ``{"email": ...}`` for the signed-in user or 401."""
+    uid = request.session.get("user_id")
+    if not uid:
+        raise HTTPException(status_code=401)
+    user = storage.user_by_id(uid)
+    if user is None:
+        # The DB row backing this session is gone — drop the cookie
+        # value so subsequent requests get a clean 401.
+        request.session.clear()
+        raise HTTPException(status_code=401)
+    return {"email": user.email}
+
+
+# Kept around so tooling / IDEs don't flag ``Depends`` as unused — it
+# will wire up for real in M11.3.
+_ = Depends
 
 
 @app.get("/{full_path:path}")
