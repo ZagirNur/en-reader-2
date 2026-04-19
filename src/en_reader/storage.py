@@ -145,10 +145,32 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX idx_pages_book ON pages(book_id)")
 
 
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Create the ``reading_progress`` table (M10.1).
+
+    One row per book (``UNIQUE(book_id)``) holds the latest reading position
+    as ``(last_page_index, last_page_offset)``. ``user_id`` will join the
+    UNIQUE tuple in M11.1 — until then, a single reader per instance is
+    assumed. ``ON DELETE CASCADE`` on ``book_id`` keeps progress in lockstep
+    with the books table without explicit cleanup in :func:`book_delete`.
+    """
+    conn.execute("""
+        CREATE TABLE reading_progress (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          last_page_index INTEGER NOT NULL DEFAULT 0,
+          last_page_offset REAL NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          UNIQUE(book_id)
+        )
+        """)
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
     _migrate_v2_to_v3,
+    _migrate_v3_to_v4,
 ]
 
 
@@ -440,6 +462,50 @@ def page_load(book_id: int, page_index: int) -> Page | None:
     )
     row = cur.fetchone()
     return _row_to_page(row) if row else None
+
+
+def progress_set(book_id: int, page_index: int, page_offset: float) -> None:
+    """UPSERT the reading progress row for ``book_id``.
+
+    Called by ``POST /api/books/{id}/progress`` whenever the frontend
+    persists a new position. The ``ON CONFLICT(book_id)`` clause makes
+    this idempotent without a separate "exists?" query — a single
+    round-trip covers both the first save and every subsequent update.
+    """
+    conn = get_db()
+    with conn:
+        conn.execute(
+            "INSERT INTO reading_progress(book_id, last_page_index, "
+            "last_page_offset, updated_at) VALUES(?, ?, ?, ?) "
+            "ON CONFLICT(book_id) DO UPDATE SET "
+            "last_page_index=excluded.last_page_index, "
+            "last_page_offset=excluded.last_page_offset, "
+            "updated_at=excluded.updated_at",
+            (
+                book_id,
+                page_index,
+                page_offset,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+def progress_get(book_id: int) -> tuple[int, float]:
+    """Return ``(last_page_index, last_page_offset)`` or ``(0, 0.0)``.
+
+    The zero fallback keeps ``/content`` simple: the frontend always
+    gets a numeric pair and never has to distinguish "new book" from
+    "position cleared" — both mean "start at the top".
+    """
+    conn = get_db()
+    cur = conn.execute(
+        "SELECT last_page_index, last_page_offset FROM reading_progress " "WHERE book_id = ?",
+        (book_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return (0, 0.0)
+    return (int(row["last_page_index"]), float(row["last_page_offset"]))
 
 
 def pages_load_slice(book_id: int, offset: int, limit: int) -> list[Page]:

@@ -63,6 +63,11 @@ class BookListItem(BaseModel):
     has_cover: bool
 
 
+class ProgressIn(BaseModel):
+    last_page_index: int = Field(ge=0)
+    last_page_offset: float = Field(ge=0.0, le=1.0)
+
+
 @app.get("/")
 def root() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
@@ -153,14 +158,34 @@ def api_book_content(book_id: int, offset: int = 0, limit: int = 1) -> dict:
         page_dict["auto_unit_ids"] = auto_ids
         page_payloads.append(page_dict)
 
+    last_page_index, last_page_offset = storage.progress_get(book_id)
     return {
         "book_id": book_id,
         "total_pages": meta.total_pages,
-        "last_page_index": 0,  # M10.1 will carry real progress.
-        "last_page_offset": 0.0,
+        "last_page_index": last_page_index,
+        "last_page_offset": last_page_offset,
         "pages": page_payloads,
         "user_dict": user_dict,
     }
+
+
+@app.post("/api/books/{book_id}/progress", status_code=204)
+def api_book_progress_save(book_id: int, p: ProgressIn) -> Response:
+    """Persist the reader's position for ``book_id``.
+
+    Validation order is intentional: 404 for unknown book first (so we
+    don't accept progress for phantom ids), then 400 if the page index
+    is past the book's ``total_pages``. Pydantic already rejects
+    out-of-range offsets (422) before this handler runs, so we don't
+    re-check ``last_page_offset`` ourselves.
+    """
+    meta = storage.book_meta(book_id)
+    if meta is None:
+        raise HTTPException(status_code=404)
+    if p.last_page_index >= meta.total_pages:
+        raise HTTPException(status_code=400, detail="page_index out of range")
+    storage.progress_set(book_id, p.last_page_index, p.last_page_offset)
+    return Response(status_code=204)
 
 
 @app.get("/api/books/{book_id}/cover")
