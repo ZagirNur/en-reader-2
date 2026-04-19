@@ -9,6 +9,7 @@ data/*
 !data/.gitkeep
 !data/stop_words.txt
 !data/mwe.txt
+!data/phrasal_verbs.txt
 
 # Build / packaging artifacts
 *.egg-info/
