@@ -13,6 +13,7 @@ via the FastAPI lifespan context manager.
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,9 +24,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from en_reader import storage
+from en_reader.metrics import counters
 from en_reader.translate import TranslateError, translate_one
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -83,6 +87,13 @@ def api_demo() -> dict:
 
 @app.post("/api/translate", response_model=TranslateResponse)
 def translate(req: TranslateRequest) -> TranslateResponse:
+    cached = storage.dict_get(req.lemma)
+    if cached:
+        counters.translate_hit += 1
+        logger.info("translate HIT: lemma=%r", req.lemma)
+        return TranslateResponse(ru=cached)
+    counters.translate_miss += 1
+    logger.info("translate MISS: lemma=%r", req.lemma)
     try:
         ru = translate_one(req.unit_text, req.sentence)
     except TranslateError as e:
