@@ -2,14 +2,18 @@
 
 Serves the demo fixture built by `scripts/build_demo.py` plus the static
 `index.html` stub. The `POST /api/translate` endpoint (M4.1) wraps the
-Gemini-backed :func:`en_reader.translate.translate_one`. M5.1 adds an
-in-memory user dictionary exposed at `/api/dictionary` and enriches the
-`/api/demo` payload with `user_dict` plus per-page `auto_unit_ids`.
+Gemini-backed :func:`en_reader.translate.translate_one`. M5.1 added an
+in-memory user dictionary exposed at `/api/dictionary` and enriched the
+`/api/demo` payload with `user_dict` plus per-page `auto_unit_ids`. M6.1
+moved that storage to SQLite (see :mod:`en_reader.storage`) so the
+dictionary survives server restarts, and wires migrations into startup
+via the FastAPI lifespan context manager.
 """
 
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -18,14 +22,22 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from en_reader import dictionary
+from en_reader import storage
 from en_reader.translate import TranslateError, translate_one
 
 load_dotenv()
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="en-reader")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001
+    """Run DB migrations on startup. No teardown work needed."""
+    storage.migrate()
+    yield
+
+
+app = FastAPI(title="en-reader", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
@@ -56,7 +68,7 @@ def api_demo() -> dict:
         payload = json.load(f)
 
     # Enrich on the fly so the dictionary is always fresh (no bake-in on disk).
-    user_dict = dictionary.all_items()
+    user_dict = storage.dict_all()
     user_dict_keys = set(user_dict.keys())
     for page in payload.get("pages", []):
         auto_ids: list[int] = []
@@ -75,19 +87,19 @@ def translate(req: TranslateRequest) -> TranslateResponse:
         ru = translate_one(req.unit_text, req.sentence)
     except TranslateError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    dictionary.add(req.lemma, ru)
+    storage.dict_add(req.lemma, ru)
     return TranslateResponse(ru=ru)
 
 
 @app.get("/api/dictionary")
 def api_dictionary_list() -> dict[str, str]:
-    return dictionary.all_items()
+    return storage.dict_all()
 
 
 @app.delete("/api/dictionary/{lemma}")
 def api_dictionary_delete(lemma: str) -> Response:
     # Idempotent: 204 whether or not the key existed.
-    dictionary.remove(lemma)
+    storage.dict_remove(lemma)
     return Response(status_code=204)
 
 

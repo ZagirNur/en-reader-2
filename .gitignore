@@ -11,6 +11,12 @@ data/*
 !data/mwe.txt
 !data/phrasal_verbs.txt
 
+# SQLite databases (M6.1) — covered by data/* above but listed explicitly
+# so future DB paths outside data/ are still ignored.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
 # Build / packaging artifacts
 *.egg-info/
 build/

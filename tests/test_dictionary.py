@@ -1,4 +1,4 @@
-"""Tests for the in-memory user dictionary (M5.1).
+"""Tests for the user dictionary endpoints (M5.1, re-pointed at SQLite in M6.1).
 
 Covers:
 * `POST /api/translate` populates the server-side dictionary.
@@ -7,7 +7,8 @@ Covers:
 * Lemma keys are normalized to lowercase.
 * `GET /api/demo` is enriched with `user_dict` and per-page `auto_unit_ids`.
 
-All LLM calls are monkeypatched — no network hits.
+All LLM calls are monkeypatched — no network hits. The ``tmp_db``
+autouse fixture in ``conftest.py`` gives each test its own SQLite file.
 """
 
 from __future__ import annotations
@@ -17,19 +18,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from en_reader import dictionary
+from en_reader import storage
 from en_reader.app import app
 from scripts.build_demo import main as build_demo_main
 
 _FIXTURE = "tests/fixtures/golden/02-phrasal.txt"
-
-
-@pytest.fixture(autouse=True)
-def _clear_dictionary() -> None:
-    """Keep the global in-memory dict isolated between tests."""
-    dictionary.clear()
-    yield
-    dictionary.clear()
 
 
 @pytest.fixture()
@@ -42,9 +35,13 @@ def fake_translate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("en_reader.app.translate_one", _fake)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def demo_client() -> TestClient:
-    """TestClient with `demo.json` built from the phrasal fixture."""
+    """TestClient with `demo.json` built from the phrasal fixture.
+
+    Function-scoped (not module-scoped) so it composes with the autouse
+    ``tmp_db`` fixture, which is itself function-scoped.
+    """
     out_path: Path = build_demo_main(_FIXTURE)
     try:
         yield TestClient(app)
@@ -101,7 +98,7 @@ def test_lemma_lowercased(fake_translate: None) -> None:
 
 
 def test_delete_dictionary() -> None:
-    dictionary.add("ominous", "зловещий")
+    storage.dict_add("ominous", "зловещий")
     c = TestClient(app)
     resp = c.delete("/api/dictionary/ominous")
     assert resp.status_code == 204
@@ -116,7 +113,7 @@ def test_delete_is_idempotent() -> None:
 
 
 def test_delete_is_case_insensitive() -> None:
-    dictionary.add("ominous", "зловещий")
+    storage.dict_add("ominous", "зловещий")
     c = TestClient(app)
     resp = c.delete("/api/dictionary/Ominous")
     assert resp.status_code == 204
@@ -148,7 +145,7 @@ def test_demo_includes_user_dict_and_auto_unit_ids(demo_client: TestClient) -> N
             break
     assert target_lemma is not None, "no units with a lemma in the phrasal fixture"
 
-    dictionary.add(target_lemma, "тест-перевод")
+    storage.dict_add(target_lemma, "тест-перевод")
 
     body = demo_client.get("/api/demo").json()
     assert body["user_dict"] == {target_lemma: "тест-перевод"}
