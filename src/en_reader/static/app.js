@@ -438,21 +438,27 @@ function openWordSheet(span) {
 
 // --- helpers (M4.2) ---
 function withScrollAnchor(mutateSync) {
-  const pages = document.querySelectorAll(".page");
-  let anchor = null;
-  const mid = window.innerHeight / 2;
-  for (const p of pages) {
-    const top = p.getBoundingClientRect().top;
-    if (top >= 0 || top < mid) {
-      anchor = p;
-      break;
-    }
-  }
-  if (!anchor) anchor = document.querySelector(".page");
-  if (!anchor) {
+  // Pick the page whose top is nearest to the viewport top (but still visible
+  // — preferring above-the-fold if any). Falls back to first page if nothing
+  // is on screen, and to a plain mutate if no pages exist.
+  const pages = Array.from(document.querySelectorAll(".page"));
+  if (pages.length === 0) {
     mutateSync();
     return;
   }
+  const vh = window.innerHeight;
+  let anchor = null;
+  let bestDist = Infinity;
+  for (const p of pages) {
+    const top = p.getBoundingClientRect().top;
+    if (top > vh) continue;
+    const dist = Math.abs(top);
+    if (dist < bestDist) {
+      bestDist = dist;
+      anchor = p;
+    }
+  }
+  if (!anchor) anchor = pages[0];
   const topBefore = anchor.getBoundingClientRect().top;
   mutateSync();
   const topAfter = anchor.getBoundingClientRect().top;
