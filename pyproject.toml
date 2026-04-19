@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "en-reader"
+version = "0.1.0"
+description = "English reader with inline Russian translations for B1-C1 learners."
+requires-python = ">=3.11"
+dependencies = [
+    "spacy",
+    "pytest",
+    "ruff",
+    "black",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
