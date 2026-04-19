@@ -1,3 +1,69 @@
-body { font-family: Georgia, serif; margin: 0; }
+:root {
+  --bg: #f6f4ef; --bg-2: #ecebe5; --card: #ffffff;
+  --ink: #14141a; --ink-2: #5c5c66; --ink-3: #9a9aa5;
+  --line: #e1dfd5; --accent: #e85d2c; --accent-2: #ff7a45;
+  --soft: #ecebe5;
+}
+html.dark, body.dark {
+  --bg: #0e0e10; --bg-2: #17171a; --card: #17171a;
+  --ink: #ebebef; --ink-2: #9a9aa5; --ink-3: #5c5c66;
+  --line: #27272e; --accent: #ff7a45; --accent-2: #ffa88a;
+  --soft: #1f1f24;
+}
+
+body {
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+
 .loader, .error { padding: 2rem; text-align: center; }
 button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
+
+.reader { max-width: 720px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.page-body {
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.page-body p { margin: 0 0 14px; }
+.page + .page { margin-top: 1.5rem; }
+.page .uplabel {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 500;
+  margin-bottom: 14px;
+}
+
+.size-s .page-body { font-size: 16px; }
+.size-m .page-body { font-size: 17px; }
+.size-l .page-body { font-size: 19px; }
+.size-xl .page-body { font-size: 21px; }
+
+.word {
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+  transition: background 0.15s;
+  border-bottom: 1px dashed color-mix(in oklab, var(--ink) 30%, transparent);
+}
+.word:hover { background: color-mix(in oklab, var(--accent) 8%, transparent); }
+.word.translated {
+  background: color-mix(in oklab, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent);
+  font-weight: 500;
+}
+.word.highlighted {
+  background: color-mix(in oklab, var(--accent) 25%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+@media (max-width: 480px) {
+  .reader { padding: 1rem 1.25rem 3rem; }
+}
