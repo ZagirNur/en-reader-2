@@ -1,0 +1,523 @@
+# en-reader MWE dictionary
+# Curated multi-word expressions that should be rendered as a single
+# translatable Unit. One expression per line, lowercase, space-separated
+# lemmas (the PhraseMatcher is built with attr="LEMMA").
+# Blank lines and `#...` comments are ignored.
+#
+# DO NOT add phrasal verbs here (look up, give up, turn on, ...) — those
+# live in a separate dictionary managed by task M1.4.
+# See tasks/M01-3-mwe-detection.md for the full rationale.
+
+# --- Compound adverbs / prepositions (spec §1, category 1) ---
+in order to
+as well as
+by the way
+on the other hand
+at the same time
+in fact
+in addition
+in spite of
+instead of
+according to
+due to
+as a result
+as if
+as though
+even though
+as long as
+as soon as
+in front of
+next to
+out of
+because of
+
+# --- Mid-level fixed idioms (spec §1, category 2) ---
+make sense
+take care
+for the sake of
+at least
+at most
+at last
+all of a sudden
+by no means
+for instance
+for example
+
+# --- More compound prepositions / prepositional phrases ---
+ahead of
+apart from
+aside from
+away from
+along with
+together with
+rather than
+other than
+such as
+regardless of
+on behalf of
+in lieu of
+in place of
+in case of
+in case
+in terms of
+in view of
+in light of
+in favor of
+in need of
+in search of
+in support of
+in memory of
+in exchange for
+in relation to
+in response to
+with regard to
+with respect to
+with the exception of
+by means of
+by virtue of
+by way of
+on account of
+on top of
+on the part of
+on the basis of
+on the grounds of
+for the purpose of
+for the benefit of
+for lack of
+in the event of
+in the face of
+in the course of
+in the middle of
+in the midst of
+in the name of
+in the absence of
+in the presence of
+in the form of
+in the wake of
+in the process of
+in the hope of
+in the interest of
+at the expense of
+at the cost of
+at the risk of
+at the mercy of
+at the end of
+at the beginning of
+at the heart of
+at the top of
+at the bottom of
+to the extent of
+
+# --- Compound adverbs and conjunctions ---
+of course
+at times
+at all
+after all
+all the same
+all the time
+all in all
+first of all
+most of all
+as a matter of fact
+in any case
+in any event
+in no time
+in time
+on time
+in the long run
+in the end
+at the end
+at once
+at first
+all at once
+all along
+by and large
+by far
+for good
+for now
+for the time being
+from now on
+from time to time
+from scratch
+from the start
+in advance
+in brief
+in short
+in summary
+in conclusion
+in general
+in particular
+in practice
+in principle
+in public
+in reality
+in retrospect
+in theory
+in turn
+in vain
+in writing
+no doubt
+on average
+on balance
+on purpose
+on the contrary
+on the whole
+once in a while
+over time
+so far
+sooner or later
+to date
+to some extent
+to a certain extent
+up to now
+
+# --- Compound conjunctions / complementizers ---
+so that
+in order that
+provided that
+assuming that
+given that
+seeing that
+now that
+so long as
+as far as
+as much as
+as many as
+inasmuch as
+insofar as
+whether or not
+no matter what
+no matter how
+no matter who
+no matter when
+no matter where
+no matter which
+not only
+but also
+not to mention
+let alone
+much less
+
+# --- Fixed verb collocations (not phrasal — require object or partner noun) ---
+make a difference
+make a decision
+make an effort
+make progress
+make room
+make way
+make time
+make a mistake
+make a mess
+make a fuss
+make a living
+make a point
+make amends
+make peace
+make friends
+make use of
+make fun of
+take care of
+take advantage of
+take part in
+take place
+take notice of
+take note of
+take issue with
+take pity on
+take pride in
+take responsibility for
+take charge of
+take account of
+take into account
+take into consideration
+take a chance
+take a look
+take a break
+take a seat
+take a shower
+take a bath
+take a walk
+take a picture
+take a nap
+take a trip
+take a risk
+take a stand
+take a step
+take a deep breath
+take steps
+take action
+take effect
+take shape
+take turns
+take sides
+give rise to
+give way to
+give birth to
+give thanks
+give credit
+give notice
+give consent
+give permission
+give evidence
+give priority to
+pay attention
+pay attention to
+pay a visit
+pay tribute to
+pay heed to
+pay lip service
+pay the price
+do business
+do harm
+do good
+do justice
+do wonders
+do damage
+do a favor
+have a look
+have a chat
+have a word
+have a say
+have an effect
+have an impact
+have an influence
+have access to
+have faith in
+have mercy
+have second thoughts
+have no idea
+have nothing to do with
+have something to do with
+come to terms with
+come into contact with
+come into being
+come into existence
+come into play
+come into force
+come into effect
+come to an end
+come to a conclusion
+come to a head
+come to life
+come to light
+come to mind
+come to pass
+come to power
+come to rest
+come to the point
+come of age
+come what may
+bring to an end
+bring to light
+bring to life
+bring to mind
+bring to a close
+bring into being
+bring into play
+bring into question
+put to use
+put to rest
+put to death
+put to the test
+put to shame
+put in place
+put at risk
+put into practice
+put into effect
+put into perspective
+keep in mind
+keep in touch
+keep an eye on
+keep track of
+keep pace with
+keep abreast of
+keep a low profile
+lose sight of
+lose track of
+lose touch with
+lose face
+lose heart
+lose ground
+lose interest
+run the risk of
+run short of
+run out of
+go to great lengths
+set foot in
+set an example
+set a precedent
+set the stage for
+set the record straight
+set in motion
+cast doubt on
+cast light on
+shed light on
+draw attention to
+draw a distinction
+draw a parallel
+draw the line
+draw to a close
+play a role
+play a part
+lay claim to
+lay the foundation for
+pay dividends
+fall in love
+fall prey to
+fall short of
+fall victim to
+fall into place
+catch sight of
+catch a glimpse of
+catch fire
+catch cold
+
+# --- Discourse markers and set phrases ---
+in other words
+that is to say
+for that matter
+for what it is worth
+to be honest
+to be sure
+to be fair
+to tell the truth
+to say the least
+to say nothing of
+needless to say
+last but not least
+more or less
+once and for all
+over and over
+again and again
+now and then
+here and there
+back and forth
+little by little
+step by step
+side by side
+face to face
+hand in hand
+day by day
+one by one
+more and more
+less and less
+through and through
+inside out
+upside down
+all over again
+all the way
+all things considered
+on second thought
+on reflection
+after a while
+as a rule
+as a whole
+as it were
+as such
+as yet
+per se
+vice versa
+and so on
+and so forth
+et cetera
+and the like
+or else
+or so
+in effect
+in essence
+in part
+in full
+in detail
+in depth
+in person
+in silence
+on and off
+to and fro
+up and down
+far and wide
+far and away
+far from it
+by all means
+by any means
+under way
+under the weather
+under the circumstances
+under no circumstances
+beside the point
+beyond doubt
+beyond question
+beyond repair
+beyond belief
+beyond the pale
+without fail
+without doubt
+without question
+without a doubt
+without further ado
+with open arms
+with the help of
+with a view to
+with an eye to
+with a grain of salt
+for the most part
+for the record
+for a start
+for starters
+for one thing
+for another thing
+for fear of
+at any rate
+at any cost
+at any time
+at all costs
+at all times
+at this point
+at that point
+at this rate
+at first glance
+at first sight
+at face value
+at issue
+at stake
+at length
+at random
+at will
+at ease
+at odds
+at best
+at worst
+at heart
+at large
+at peace
+at present
+in question
+in charge
+in control
+in doubt
+in existence
+in progress
+in use
+on duty
+on fire
+on hand
+on hold
+on record
+on schedule
+on strike
+on the go
+on the move
+on the verge of
+on the brink of
+on the way
+out of the blue
+out of the question
+out of the way
+out of breath
+out of control
+out of date
+out of hand
+out of order
+out of place
+out of reach
+out of sight
+out of touch

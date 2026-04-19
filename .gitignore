@@ -8,6 +8,7 @@ __pycache__/
 data/*
 !data/.gitkeep
 !data/stop_words.txt
+!data/mwe.txt
 
 # Build / packaging artifacts
 *.egg-info/
