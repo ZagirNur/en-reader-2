@@ -98,7 +98,7 @@ function buildPageSection(page) {
       span.dataset.unitId = String(unit.id);
       span.dataset.lemma = unit.lemma;
       span.dataset.kind = unit.kind;
-      if (unit.pair_id) span.dataset.pairId = String(unit.pair_id);
+      if (unit.pair_id != null) span.dataset.pairId = String(unit.pair_id);
 
       const ids = unit.token_ids;
       let spanText = "";
@@ -195,13 +195,21 @@ function renderLoading() {
 
 function renderError() {
   const root = document.getElementById("root");
-  const msg = state.error ?? "Unknown error";
-  root.innerHTML = `<div class="error">${msg}</div><p><a id="go-home" href="/">Go home</a></p>`;
-  const link = document.getElementById("go-home");
+  root.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "error";
+  box.textContent = state.error ?? "Unknown error";
+  const p = document.createElement("p");
+  const link = document.createElement("a");
+  link.id = "go-home";
+  link.href = "/";
+  link.textContent = "Go home";
   link.onclick = (ev) => {
     ev.preventDefault();
     navigate("/");
   };
+  p.appendChild(link);
+  root.append(box, p);
 }
 
 // --- render ---
