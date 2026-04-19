@@ -15,3 +15,6 @@ data/*
 *.egg-info/
 build/
 dist/
+
+# Generated demo fixture (built by scripts/build_demo.py)
+src/en_reader/static/demo.json
