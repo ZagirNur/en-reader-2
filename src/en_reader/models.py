@@ -6,7 +6,7 @@ These types are intentionally minimal at this stage: task M1.1 only populates
 change.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -41,3 +41,18 @@ class Unit:
     kind: str
     is_split_pv: bool = False
     pair_id: int | None = None
+
+
+@dataclass
+class Page:
+    """A sentence-bounded slice of the book, sized for the reader frontend.
+
+    Produced by `en_reader.chunker.chunk`. `tokens` and `units` are
+    self-contained: `idx_in_text` is relative to `text`, and `Unit.token_ids`
+    index into this page's `tokens` list, not the global token stream.
+    """
+
+    page_index: int
+    text: str
+    tokens: list[Token] = field(default_factory=list)
+    units: list[Unit] = field(default_factory=list)
