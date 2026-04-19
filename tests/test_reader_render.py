@@ -8,25 +8,19 @@ We can't run JS in pytest, but we can verify:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from fastapi.testclient import TestClient
 
 from en_reader.app import app
-from scripts.build_demo import main as build_demo_main
+from scripts.seed import main as seed_main
 
 _FIXTURE = "tests/fixtures/golden/02-phrasal.txt"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def client() -> TestClient:
-    out_path: Path = build_demo_main(_FIXTURE)
-    try:
-        yield TestClient(app)
-    finally:
-        if out_path.exists():
-            out_path.unlink()
+    seed_main(_FIXTURE)
+    return TestClient(app)
 
 
 def test_app_js_emits_word_spans(client: TestClient) -> None:

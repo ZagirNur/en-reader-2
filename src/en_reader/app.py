@@ -1,20 +1,21 @@
 """FastAPI skeleton for the en-reader dev server.
 
-Serves the demo fixture built by `scripts/build_demo.py` plus the static
-`index.html` stub. The `POST /api/translate` endpoint (M4.1) wraps the
+Serves the most-recently-seeded book via ``/api/demo`` (read directly from
+SQLite — the static ``demo.json`` handoff was retired in M8.1) plus the
+static ``index.html`` stub. ``POST /api/translate`` (M4.1) wraps the
 Gemini-backed :func:`en_reader.translate.translate_one`. M5.1 added an
-in-memory user dictionary exposed at `/api/dictionary` and enriched the
-`/api/demo` payload with `user_dict` plus per-page `auto_unit_ids`. M6.1
-moved that storage to SQLite (see :mod:`en_reader.storage`) so the
-dictionary survives server restarts, and wires migrations into startup
-via the FastAPI lifespan context manager.
+in-memory user dictionary exposed at ``/api/dictionary`` and enriched the
+``/api/demo`` payload with ``user_dict`` plus per-page ``auto_unit_ids``.
+M6.1 moved dictionary storage to SQLite (see :mod:`en_reader.storage`) so it
+survives restarts; M8.1 extended the schema with ``books`` and ``pages`` and
+pointed ``/api/demo`` at the newest book.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,7 +24,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from en_reader import images, storage
+from en_reader import storage
 from en_reader.metrics import counters
 from en_reader.translate import TranslateError, translate_one
 
@@ -62,28 +63,42 @@ def root() -> FileResponse:
 
 @app.get("/api/demo")
 def api_demo() -> dict:
-    demo_path = _STATIC_DIR / "demo.json"
-    if not demo_path.exists():
+    """Return the newest seeded book, enriched with ``user_dict``/``auto_unit_ids``.
+
+    Thin shim over the books/pages tables until M8.2 introduces a real
+    library-scoped content API. 404s with a helpful message when the DB has
+    no books (fresh checkout, tests that forgot to seed, etc.).
+    """
+    books = storage.book_list()
+    if not books:
         raise HTTPException(
             status_code=404,
-            detail="demo.json not found — run `python scripts/build_demo.py <path>` first",
+            detail="no books seeded; run `python scripts/seed.py <path-to-txt>` first",
         )
-    with demo_path.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
+    # book_list() orders newest first; take the head.
+    newest = books[0]
+    pages = storage.pages_load_slice(newest.id, 0, newest.total_pages)
 
-    # Enrich on the fly so the dictionary is always fresh (no bake-in on disk).
     user_dict = storage.dict_all()
     user_dict_keys = set(user_dict.keys())
-    for page in payload.get("pages", []):
+
+    page_payloads: list[dict] = []
+    for page in pages:
+        page_dict = asdict(page)
         auto_ids: list[int] = []
-        for unit in page.get("units", []):
+        for unit in page_dict.get("units", []):
             lemma = (unit.get("lemma") or "").lower()
             if lemma and lemma in user_dict_keys:
                 auto_ids.append(unit["id"])
-        page["auto_unit_ids"] = auto_ids
-    payload["user_dict"] = user_dict
-    payload["book_id"] = images.DEMO_BOOK_ID
-    return payload
+        page_dict["auto_unit_ids"] = auto_ids
+        page_payloads.append(page_dict)
+
+    return {
+        "total_pages": newest.total_pages,
+        "book_id": newest.id,
+        "pages": page_payloads,
+        "user_dict": user_dict,
+    }
 
 
 @app.post("/api/translate", response_model=TranslateResponse)

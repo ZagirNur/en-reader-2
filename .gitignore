@@ -22,5 +22,10 @@ data/*.db-shm
 build/
 dist/
 
-# Generated demo fixture (built by scripts/build_demo.py)
+# Generated demo fixture (built by the retired scripts/build_demo.py; kept
+# listed so a stale checkout with the artefact ignores it).
 src/en_reader/static/demo.json
+
+# Book covers land with the real parsers in M12; ignore the directory now so
+# future seeds don't leak files into the working tree.
+data/covers/

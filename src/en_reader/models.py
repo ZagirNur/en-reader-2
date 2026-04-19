@@ -7,6 +7,7 @@ change.
 """
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass
@@ -74,3 +75,24 @@ class Page:
     tokens: list[Token] = field(default_factory=list)
     units: list[Unit] = field(default_factory=list)
     images: list[PageImage] = field(default_factory=list)
+
+
+@dataclass
+class BookMeta:
+    """Library-level book metadata, mirroring the ``books`` table row (M8.1).
+
+    Returned by :func:`en_reader.storage.book_meta` /
+    :func:`en_reader.storage.book_list` without any page payload — the
+    per-page tokens/units/images are fetched separately via
+    :func:`en_reader.storage.pages_load_slice`.
+    """
+
+    id: int
+    title: str
+    author: Optional[str]
+    language: str
+    source_format: str
+    source_bytes_size: int
+    total_pages: int
+    cover_path: Optional[str]
+    created_at: str

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from en_reader import images, storage
 from en_reader.app import app
-from scripts.build_demo import main as build_demo_main
+from scripts.seed import main as seed_main
 
 # 1x1 transparent PNG, checked in as tests/fixtures/demo-images/star.png.
 _TINY_PNG = base64.b64decode(
@@ -90,32 +90,30 @@ def test_image_endpoint_wrong_book(client: TestClient) -> None:
 # ---------- seed pipeline ----------
 
 
-def test_build_demo_injects_images_and_positions(client: TestClient, tmp_path: Path) -> None:
+def test_seed_injects_images_and_positions(client: TestClient, tmp_path: Path) -> None:
     images_dir = tmp_path / "imgs"
     images_dir.mkdir()
     (images_dir / "pic.png").write_bytes(_TINY_PNG)
 
-    out_path = build_demo_main(_FIXTURE_TXT, images_dir=images_dir)
-    try:
-        resp = client.get("/api/demo")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body.get("book_id") == 1
-        pages = body["pages"]
-        assert len(pages) > 0
+    book_id = seed_main(_FIXTURE_TXT, images_dir=images_dir)
+    assert book_id >= 1
 
-        total_images = 0
-        for page in pages:
-            page_imgs = page.get("images", [])
-            marker_hits = images.IMAGE_MARKER_RE.findall(page["text"])
-            assert len(marker_hits) == len(page_imgs), (
-                f"page {page['page_index']}: {len(marker_hits)} markers vs "
-                f"{len(page_imgs)} image records"
-            )
-            for img in page_imgs:
-                assert page["text"][img["position"] : img["position"] + 3] == "IMG"
-            total_images += len(page_imgs)
-        assert total_images >= 1
-    finally:
-        if out_path.exists():
-            out_path.unlink()
+    resp = client.get("/api/demo")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("book_id") == book_id
+    pages = body["pages"]
+    assert len(pages) > 0
+
+    total_images = 0
+    for page in pages:
+        page_imgs = page.get("images", [])
+        marker_hits = images.IMAGE_MARKER_RE.findall(page["text"])
+        assert len(marker_hits) == len(page_imgs), (
+            f"page {page['page_index']}: {len(marker_hits)} markers vs "
+            f"{len(page_imgs)} image records"
+        )
+        for img in page_imgs:
+            assert page["text"][img["position"] : img["position"] + 3] == "IMG"
+        total_images += len(page_imgs)
+    assert total_images >= 1

@@ -13,14 +13,12 @@ autouse fixture in ``conftest.py`` gives each test its own SQLite file.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from fastapi.testclient import TestClient
 
 from en_reader import storage
 from en_reader.app import app
-from scripts.build_demo import main as build_demo_main
+from scripts.seed import main as seed_main
 
 _FIXTURE = "tests/fixtures/golden/02-phrasal.txt"
 
@@ -37,17 +35,13 @@ def fake_translate(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture()
 def demo_client() -> TestClient:
-    """TestClient with `demo.json` built from the phrasal fixture.
+    """TestClient with the phrasal fixture seeded into the per-test DB.
 
-    Function-scoped (not module-scoped) so it composes with the autouse
-    ``tmp_db`` fixture, which is itself function-scoped.
+    Function-scoped so it composes with the autouse ``tmp_db`` fixture,
+    which is itself function-scoped.
     """
-    out_path: Path = build_demo_main(_FIXTURE)
-    try:
-        yield TestClient(app)
-    finally:
-        if out_path.exists():
-            out_path.unlink()
+    seed_main(_FIXTURE)
+    return TestClient(app)
 
 
 # ---------- translate -> dictionary wiring ----------

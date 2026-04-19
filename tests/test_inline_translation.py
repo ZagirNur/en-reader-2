@@ -17,21 +17,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from en_reader.app import app
-from scripts.build_demo import main as build_demo_main
+from scripts.seed import main as seed_main
 
 _FIXTURE = "tests/fixtures/golden/02-phrasal.txt"
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "src" / "en_reader" / "static"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def client() -> TestClient:
-    out_path: Path = build_demo_main(_FIXTURE)
-    try:
-        yield TestClient(app)
-    finally:
-        if out_path.exists():
-            out_path.unlink()
+    seed_main(_FIXTURE)
+    return TestClient(app)
 
 
 # ---------- static bundle checks ----------
