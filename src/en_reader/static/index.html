@@ -10,11 +10,31 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div id="root"></div>
-  <div class="scrim" id="scrim"></div>
-  <div class="sheet" id="sheet"></div>
-  <div class="toast" id="toast"></div>
-  <nav class="tabbar" id="tabbar" aria-label="Tabs"></nav>
+  <!-- M17.1: desktop-visible "phone shell" from the Theme D prototype.
+       On viewports ≤ 480 px the @media rule in style.css strips the
+       frame, status bar, notch, and homebar, so the app goes
+       full-bleed on real phones. #root / #scrim / #sheet / #toast /
+       #tabbar keep their original ids so app.js wiring is unchanged. -->
+  <div class="stage">
+    <div class="phone" id="phone">
+      <div class="notch"></div>
+      <div class="statusbar" id="statusbar">
+        <span>9:41</span>
+        <span style="display:inline-flex;gap:6px;align-items:center">
+          <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor" aria-hidden="true"><path d="M1 10V7h2v3H1zm4 0V5h2v5H5zm4 0V3h2v7H9zm4 0V1h2v9h-2z"/></svg>
+          <svg width="24" height="11" viewBox="0 0 24 11" fill="none" aria-hidden="true"><rect x="0.5" y="0.5" width="20" height="10" rx="2.5" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="14" height="7" rx="1.2" fill="currentColor"/><rect x="21" y="3.5" width="1.5" height="4" rx="0.5" fill="currentColor" opacity="0.4"/></svg>
+        </span>
+      </div>
+      <div class="phone-body">
+        <div id="root"></div>
+        <div class="scrim" id="scrim"></div>
+        <div class="sheet" id="sheet"></div>
+        <div class="toast" id="toast"></div>
+        <nav class="tabbar" id="tabbar" aria-label="Tabs"></nav>
+      </div>
+      <div class="homebar"></div>
+    </div>
+  </div>
   <script src="/static/app.js" type="module"></script>
 </body>
 </html>

@@ -424,6 +424,26 @@ function showCardMenu(cardEl, bookId) {
   }, 0);
 }
 
+// M17.1: prototype's library header shows "Вторник · 9:41" — a weekday
+// plus current time. We format dynamically so the screen feels alive
+// on every open. Weekday is rendered in Russian long form; the time is
+// HH:MM (24h). Hours/minutes are zero-padded.
+function _formatLibraryDate(d) {
+  const weekdays = [
+    "Воскресенье",
+    "Понедельник",
+    "Вторник",
+    "Среда",
+    "Четверг",
+    "Пятница",
+    "Суббота",
+  ];
+  const wd = weekdays[d.getDay()];
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${wd} · ${hh}:${mm}`;
+}
+
 function renderLibrary() {
   const root = document.getElementById("root");
 
@@ -484,8 +504,18 @@ function renderLibrary() {
 
   const header = document.createElement("header");
   header.className = "library-header";
+  // M17.1: left column = date upper-label + H1 "Моя полка", matching the
+  // Theme D prototype. Date is rendered client-side using the current
+  // locale so the prototype's static "Вторник · 9:41" becomes a live
+  // weekday + time of day (stripped of seconds).
+  const headerLeft = document.createElement("div");
+  const dateEl = document.createElement("div");
+  dateEl.className = "date";
+  dateEl.textContent = _formatLibraryDate(new Date());
+  headerLeft.appendChild(dateEl);
   const h1 = document.createElement("h1");
   h1.textContent = "Моя полка";
+  headerLeft.appendChild(h1);
   const headerRight = document.createElement("div");
   headerRight.className = "library-header-right";
   const avatar = document.createElement("div");
@@ -511,7 +541,7 @@ function renderLibrary() {
   });
   headerRight.appendChild(avatar);
   headerRight.appendChild(logoutBtn);
-  header.appendChild(h1);
+  header.appendChild(headerLeft);
   header.appendChild(headerRight);
   main.appendChild(header);
 
