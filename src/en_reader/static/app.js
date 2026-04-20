@@ -1798,7 +1798,7 @@ function buildWordDetailSheet(word) {
   primary.textContent = "Тренировать";
   primary.addEventListener("click", () => {
     closeSheet();
-    showToast("Скоро");
+    navigate("/learn/card");
   });
   actions.appendChild(primary);
 
