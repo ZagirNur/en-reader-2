@@ -94,7 +94,20 @@ def translate_one(unit_text: str, sentence: str) -> str:
     (empty, contains ``<``/``>``, multi-line, or longer than 60 characters).
 
     Raises :class:`TranslateError` if no attempt succeeds.
+
+    .. note::
+       When the environment variable ``E2E_MOCK_LLM`` is set to ``"1"`` this
+       function short-circuits to ``f"RU:{unit_text}"`` without contacting
+       Gemini or running the retry loop. The hook is used exclusively by
+       Playwright E2E tests (see :mod:`tests.e2e.conftest`) so browser
+       flows remain deterministic and offline.
     """
+    # M15.6: E2E tests stub the Gemini call entirely via this env var.
+    # Keep the check above the retry loop so the mock path doesn't pay
+    # backoff/sleep costs, and the return is byte-stable for assertions.
+    if os.environ.get("E2E_MOCK_LLM") == "1":
+        return f"RU:{unit_text}"
+
     logger.info("translate request: unit=%r sentence=%r", unit_text, sentence[:100])
 
     user_prompt = f"Word: {unit_text}\nSentence: {sentence}"

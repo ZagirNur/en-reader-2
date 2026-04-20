@@ -26,6 +26,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "pytest",
     "pytest-cov>=4.1",
+    "pytest-playwright>=0.5",
     "ruff",
     "black",
 ]
