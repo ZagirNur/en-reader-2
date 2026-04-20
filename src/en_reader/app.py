@@ -979,37 +979,347 @@ def tg_diag(p: TelegramDiagIn, request: Request) -> dict:
     return {"ok": True}
 
 
+def _account_summary(user_id: int) -> str:
+    """One-line account summary the Telegram confirm-keyboard shows.
+
+    Counts are read cheaply — the link-flow call site is webhook-scoped
+    and only fires once per conflicting linkage, so a few SELECTs don't
+    need caching. Returns e.g. "12 слов, 3 книги".
+    """
+    conn = storage.get_db()
+    words = int(conn.execute(
+        "SELECT COUNT(*) AS n FROM user_dictionary WHERE user_id = ?", (user_id,)
+    ).fetchone()["n"])
+    books = int(conn.execute(
+        "SELECT COUNT(*) AS n FROM books WHERE user_id = ?", (user_id,)
+    ).fetchone()["n"])
+
+    def _plural(n: int, one: str, few: str, many: str) -> str:
+        if 11 <= (n % 100) <= 14:
+            return many
+        r = n % 10
+        if r == 1:
+            return one
+        if 2 <= r <= 4:
+            return few
+        return many
+
+    return (
+        f"{words} {_plural(words, 'слово', 'слова', 'слов')}, "
+        f"{books} {_plural(books, 'книга', 'книги', 'книг')}"
+    )
+
+
+def _handle_link_start(
+    token_str: str, from_id: int, chat_id: int
+) -> None:
+    """Process ``/start link_<token>`` inside the webhook.
+
+    Handles all four paths in one place so the webhook entrypoint stays
+    a thin dispatcher:
+
+    1. Token missing / expired → tell the user to click Link again.
+    2. Already linked (token.user_id already carries this tg_id) → no-op
+       message, mark token done so the poller stops.
+    3. No other user has this tg_id → write telegram_id onto the link
+       initiator and reply "привязано".
+    4. Another user has this tg_id:
+       * If either side is empty → merge silently into the non-empty
+         account (dest = session user, winner = whichever has data).
+       * Else show the inline keyboard, flip status to
+         ``conflict_waiting`` and let the callback_query handler finish.
+    """
+    link = storage.link_token_get(token_str)
+    if link is None or link.status != "pending":
+        tg.send_plain(
+            _TELEGRAM_BOT_TOKEN,
+            chat_id,
+            "Ссылка для привязки просрочена — нажми «Привязать Telegram» снова.",
+        )
+        return
+    dest = storage.user_by_id(link.user_id)
+    if dest is None:
+        storage.link_token_update(token_str, status="failed", result="dest gone")
+        tg.send_plain(_TELEGRAM_BOT_TOKEN, chat_id, "Аккаунт не найден.")
+        return
+    if dest.telegram_id == from_id:
+        storage.link_token_update(token_str, status="done", result="already_linked")
+        tg.send_plain(_TELEGRAM_BOT_TOKEN, chat_id, "Этот Telegram уже привязан.")
+        return
+    existing = storage.user_by_telegram(from_id)
+    if existing is None:
+        # Easy path: claim the tg_id on dest. M18.4 partial UNIQUE
+        # (dest didn't have one) means a straight UPDATE is safe.
+        conn = storage.get_db()
+        with conn:
+            conn.execute(
+                "UPDATE users SET telegram_id = ? WHERE id = ?",
+                (from_id, dest.id),
+            )
+        storage.link_token_update(token_str, status="done", result="linked")
+        tg.send_plain(_TELEGRAM_BOT_TOKEN, chat_id, "Привязал! Возвращайся в приложение.")
+        return
+    # Both exist. Decide: auto-merge or ask.
+    dest_has = storage.user_has_data(dest.id)
+    src_has = storage.user_has_data(existing.id)
+    if not dest_has or not src_has:
+        # Auto-merge: winner is always dest (the session user) — we move
+        # src's data into dest regardless of which side was empty, since
+        # dest is what the active session is logged in as.
+        storage.user_merge(dest_id=dest.id, src_id=existing.id)
+        storage.link_token_update(token_str, status="done", result="merged_auto")
+        tg.send_plain(
+            _TELEGRAM_BOT_TOKEN, chat_id,
+            "Привязал и объединил данные. Возвращайся в приложение.",
+        )
+        return
+    # Conflict: both sides have data → inline keyboard.
+    dest_summary = _account_summary(dest.id)
+    src_summary = _account_summary(existing.id)
+    try:
+        resp = tg.send_link_choice(
+            _TELEGRAM_BOT_TOKEN, chat_id, token_str, dest_summary, src_summary
+        )
+    except Exception:
+        logger.exception("send_link_choice failed")
+        storage.link_token_update(token_str, status="failed", result="send_keyboard")
+        return
+    msg_id = int(resp.get("message_id") or 0) if isinstance(resp, dict) else 0
+    storage.link_token_update(
+        token_str,
+        status="conflict_waiting",
+        other_user_id=existing.id,
+        chat_id=chat_id,
+        message_id=msg_id,
+    )
+
+
+def _handle_link_callback(token_str: str, keep: str, callback_query: dict) -> None:
+    """Resolve the user's "which account to keep" choice from the keyboard.
+
+    ``keep`` ∈ {"dest", "src"}:
+    * ``dest`` → keep the email account, merge the tg-only one in.
+    * ``src``  → keep the tg-only account, merge the email account in.
+      The email user's session keeps their user_id; after the src→dest
+      swap the session user_id still points at a valid row because dest
+      inherits src's state via user_merge(dest=src_id, src=dest_id)...
+      wait, that flips what "dest" means. Clarification: we always
+      keep ``session user`` (= original link.user_id) in the session,
+      but its content changes depending on which side "wins".
+    """
+    cqid = callback_query.get("id") or ""
+    link = storage.link_token_get(token_str)
+    if link is None or link.status != "conflict_waiting":
+        tg.answer_callback(_TELEGRAM_BOT_TOKEN, cqid, "Ссылка просрочена")
+        return
+    email_user = storage.user_by_id(link.user_id)
+    tg_user = (
+        storage.user_by_id(link.other_user_id)
+        if link.other_user_id is not None
+        else None
+    )
+    if email_user is None or tg_user is None:
+        tg.answer_callback(_TELEGRAM_BOT_TOKEN, cqid, "Аккаунт пропал")
+        storage.link_token_update(token_str, status="failed", result="user_gone")
+        return
+    # If the email-user is about to be deleted (keep=="src"), the
+    # link_tokens row's ON DELETE CASCADE would take the token with
+    # it — so re-point the token's user_id to the surviving row before
+    # the merge. Without this, the status poller would see the token
+    # vanish and never learn that it needs to reissue the session.
+    if keep == "src":
+        conn = storage.get_db()
+        with conn:
+            conn.execute(
+                "UPDATE link_tokens SET user_id = ? WHERE token = ?",
+                (tg_user.id, token_str),
+            )
+    try:
+        if keep == "dest":
+            storage.user_merge(dest_id=email_user.id, src_id=tg_user.id)
+            result_msg = "Оставили текущий (email). Данные Telegram-аккаунта перенесены."
+        else:
+            # Keep TG-account's data. Email account row is deleted at the
+            # end of user_merge; the status endpoint then flips the session
+            # cookie to the surviving tg_user id on the next poll.
+            storage.user_merge(dest_id=tg_user.id, src_id=email_user.id)
+            result_msg = "Оставили Telegram-аккаунт. Данные email-аккаунта перенесены."
+    except Exception:
+        logger.exception("user_merge failed for token %s", token_str)
+        tg.answer_callback(_TELEGRAM_BOT_TOKEN, cqid, "Ошибка")
+        storage.link_token_update(token_str, status="failed", result="merge_error")
+        return
+    # Record which user_id is the "surviving" one — the status poller
+    # reads this to re-issue the session cookie when the surviving id
+    # differs from the original session user.
+    winner_id = email_user.id if keep == "dest" else tg_user.id
+    storage.link_token_update(
+        token_str,
+        status="done",
+        other_user_id=winner_id,
+        result=f"merged_{keep}",
+    )
+    tg.answer_callback(_TELEGRAM_BOT_TOKEN, cqid, "Готово")
+    if link.chat_id and link.message_id:
+        try:
+            tg.edit_message(
+                _TELEGRAM_BOT_TOKEN, int(link.chat_id), int(link.message_id), result_msg
+            )
+        except Exception:
+            logger.exception("edit_message failed for token %s", token_str)
+
+
 @app.post("/tg/webhook")
 async def tg_webhook(request: Request) -> Response:
-    """Telegram → us update delivery. Only /start replies wire anything up.
+    """Telegram → us update delivery.
 
-    We check ``X-Telegram-Bot-Api-Secret-Token`` against the secret we
-    registered at startup so a public URL can't be spammed with forged
-    updates. Anything we don't recognise is silently ACKed with 200
-    (Telegram retries on 5xx, which we don't want).
+    Flow:
+
+    * ``/start`` (no args) → send the Mini-App launcher button.
+    * ``/start link_<TOKEN>`` → run the account-linking protocol
+      (:func:`_handle_link_start`).
+    * ``callback_query`` with ``lk:<token>:<keep>`` data → resolve a
+      pending link conflict (:func:`_handle_link_callback`).
+
+    Everything else silent-200s so Telegram doesn't retry legitimate
+    updates we don't care about yet. The secret-token check guards
+    against forged POSTs to the public URL.
     """
     if not _TELEGRAM_BOT_TOKEN:
         return Response(status_code=503)
     supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if supplied != _TELEGRAM_WEBHOOK_SECRET:
-        # Silent 200 — don't confirm the URL to pokers, but don't 5xx
-        # either (Telegram would retry the legitimate update later).
         return Response(status_code=200)
     try:
         update = await request.json()
     except Exception:
         return Response(status_code=200)
+
+    # 1. callback_query path (inline keyboard clicks).
+    cq = update.get("callback_query") or {}
+    if cq:
+        data = (cq.get("data") or "").strip()
+        if data.startswith("lk:"):
+            parts = data.split(":")
+            if len(parts) == 3 and parts[2] in ("dest", "src"):
+                try:
+                    _handle_link_callback(parts[1], parts[2], cq)
+                except Exception:
+                    logger.exception("link callback failed")
+        return Response(status_code=200)
+
+    # 2. message path (/start and /start link_XXX).
     msg = update.get("message") or {}
     chat = msg.get("chat") or {}
     chat_id = chat.get("id")
     text = (msg.get("text") or "").strip()
+    frm = msg.get("from") or {}
+    from_id = frm.get("id")
     if chat_id and text.startswith("/start"):
+        if text.startswith("/start link_") and from_id is not None:
+            token_str = text[len("/start link_"):].strip()
+            if token_str:
+                try:
+                    _handle_link_start(token_str, int(from_id), int(chat_id))
+                except Exception:
+                    logger.exception("link start failed")
+                return Response(status_code=200)
         webapp_url = _PUBLIC_ORIGIN or "https://enreader.zagirnur.dev"
         try:
             tg.send_start_reply(_TELEGRAM_BOT_TOKEN, int(chat_id), webapp_url)
         except Exception:
             logger.exception("send_start_reply failed")
     return Response(status_code=200)
+
+
+# ---------- M18.4: authenticated link-flow endpoints ----------
+
+
+@app.post("/auth/link/telegram/init")
+def auth_link_telegram_init(
+    request: Request, user: User = Depends(get_current_user)
+) -> dict:
+    """Mint a one-time link token and return the deep link to hand off.
+
+    The frontend opens ``deep_link`` in the Telegram app (or via
+    ``Telegram.WebApp.openTelegramLink`` when we're already in the
+    Mini App). The user's tap on "Start" in the bot chat sends
+    ``/start link_<token>`` back, which the webhook consumes.
+    """
+    if not _TELEGRAM_BOT_TOKEN:
+        raise HTTPException(status_code=503, detail="telegram disabled")
+    # Derive the bot username from the token so we don't need a second
+    # env var. Bot tokens are ``<numeric-id>:<opaque>``; the username
+    # isn't in the token itself, so read /getMe once and cache.
+    bot_username = _resolve_bot_username()
+    if not bot_username:
+        raise HTTPException(status_code=503, detail="telegram misconfigured")
+    token_str = storage.link_token_create(user.id)
+    deep_link = f"https://t.me/{bot_username}?start=link_{token_str}"
+    logger.info("auth/link/telegram/init: user_id=%d token=%s", user.id, token_str[:6])
+    return {"token": token_str, "deep_link": deep_link}
+
+
+@app.get("/auth/link/telegram/status")
+def auth_link_telegram_status(token: str, request: Request) -> dict:
+    """Poll the status of a pending link request.
+
+    No ``Depends(get_current_user)`` — the 24-byte URL-safe token is
+    itself the capability that authenticates this endpoint. Reasons:
+
+    * The status endpoint needs to survive the keep-TG merge path,
+      where the email-user row (which the browser's session cookie
+      points at) is deleted as part of ``user_merge``. With Depends,
+      the poller would 401 before it ever learned to re-issue.
+    * The token has 192 bits of entropy, a 10-minute TTL, and only
+      lands on the initiating frontend + the TG chat that scanned
+      it — both under the user's control.
+
+    On ``merged_src`` (keep-Telegram) we flip the session cookie to the
+    surviving user id in the same response. ``_handle_link_callback``
+    re-points ``link_tokens.user_id`` to the winner *before* the merge
+    runs so the ON DELETE CASCADE on the email user doesn't take the
+    token row with it.
+    """
+    link = storage.link_token_get(token)
+    if link is None:
+        return {"status": "expired", "result": None}
+    payload: dict = {"status": link.status, "result": link.result}
+    if (
+        link.status == "done"
+        and link.result == "merged_src"
+        and link.other_user_id is not None
+    ):
+        request.session["user_id"] = link.other_user_id
+        payload["session_reissued"] = True
+    return payload
+
+
+_BOT_USERNAME_CACHE: dict[str, str] = {}
+
+
+def _resolve_bot_username() -> str | None:
+    """Look up the bot's ``@username`` via ``getMe``; cached per-token.
+
+    We don't require the operator to stuff the username into another
+    env var — the Bot API exposes it, so we just ask once at first use
+    and remember the answer. If the token is rotated the process
+    restart will pick up the new one.
+    """
+    if not _TELEGRAM_BOT_TOKEN:
+        return None
+    cached = _BOT_USERNAME_CACHE.get(_TELEGRAM_BOT_TOKEN)
+    if cached:
+        return cached
+    try:
+        me = tg._call(_TELEGRAM_BOT_TOKEN, "getMe", {})
+    except Exception:
+        logger.exception("getMe failed")
+        return None
+    uname = me.get("username") if isinstance(me, dict) else None
+    if uname:
+        _BOT_USERNAME_CACHE[_TELEGRAM_BOT_TOKEN] = uname
+    return uname
 
 
 @app.post("/auth/logout")
