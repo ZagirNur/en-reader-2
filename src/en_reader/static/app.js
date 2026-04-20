@@ -546,7 +546,16 @@ function renderLibrary() {
     }
     navigate("/login");
   });
+  // M18.4: gear → settings sheet (Telegram link lives here).
+  const gearBtn = document.createElement("button");
+  gearBtn.type = "button";
+  gearBtn.className = "logout-btn";
+  gearBtn.title = "Настройки";
+  gearBtn.setAttribute("aria-label", "Настройки");
+  gearBtn.textContent = "⚙";
+  gearBtn.addEventListener("click", () => openSettingsSheet());
   headerRight.appendChild(avatar);
+  headerRight.appendChild(gearBtn);
   headerRight.appendChild(logoutBtn);
   header.appendChild(headerLeft);
   header.appendChild(headerRight);
@@ -3212,6 +3221,147 @@ const _TABS = [
   { id: "learn", label: "Учить", icon: _ICONS.brain },
 ];
 
+// M18.4: Settings sheet — for now just the Telegram link button.
+// Keeps the flow self-contained: a POST mints a one-time token, we hand
+// the user a t.me deep link, then poll until the webhook side declares
+// the link done. On the keep-TG merge path the poller picks up a
+// ``session_reissued`` flag and the caller re-runs bootstrap to re-bind
+// the UI to the surviving user row.
+let _linkPollTimer = null;
+
+function openSettingsSheet() {
+  const content = document.createElement("div");
+  content.className = "settings-sheet";
+
+  const title = document.createElement("h2");
+  title.textContent = "Настройки";
+  content.appendChild(title);
+
+  const emailRow = document.createElement("div");
+  emailRow.className = "settings-row";
+  emailRow.textContent = "Email: " + (state.userEmail || "—");
+  content.appendChild(emailRow);
+
+  const tgRow = document.createElement("div");
+  tgRow.className = "settings-row";
+  const isTelegramLinked = !!(state.userEmail && !state.userEmail.startsWith("tg-"));
+  // The email heuristic is rough — a real "is linked" flag would come
+  // from /auth/me. Good enough for the MVP; a follow-up can surface the
+  // telegram_id explicitly.
+  tgRow.textContent = "Telegram: " + (isTelegramLinked ? "✓" : "не привязан");
+  content.appendChild(tgRow);
+
+  const linkBtn = document.createElement("button");
+  linkBtn.type = "button";
+  linkBtn.className = "btn primary";
+  linkBtn.textContent = "Привязать Telegram";
+  linkBtn.addEventListener("click", () => _startTelegramLink(linkBtn, statusLine));
+  content.appendChild(linkBtn);
+
+  const statusLine = document.createElement("div");
+  statusLine.className = "settings-status";
+  statusLine.textContent = "";
+  content.appendChild(statusLine);
+
+  openSheet(content);
+}
+
+async function _startTelegramLink(linkBtn, statusLine) {
+  linkBtn.disabled = true;
+  statusLine.textContent = "Генерирую ссылку…";
+  let body;
+  try {
+    const res = await fetch("/auth/link/telegram/init", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    });
+    if (!res.ok) {
+      linkBtn.disabled = false;
+      statusLine.textContent =
+        res.status === 503 ? "Telegram-бот не настроен" : "Не получилось, попробуй ещё раз";
+      return;
+    }
+    body = await res.json();
+  } catch (_e) {
+    linkBtn.disabled = false;
+    statusLine.textContent = "Нет соединения";
+    return;
+  }
+  const { token, deep_link } = body || {};
+  if (!token || !deep_link) {
+    linkBtn.disabled = false;
+    statusLine.textContent = "Не получилось, попробуй ещё раз";
+    return;
+  }
+  statusLine.textContent = "Открываю Telegram…";
+  // If we're already inside a Mini App, Telegram's SDK has a dedicated
+  // API to hop to a bot chat without leaving the WebView.
+  const wa = window.Telegram && window.Telegram.WebApp;
+  if (wa && typeof wa.openTelegramLink === "function") {
+    try { wa.openTelegramLink(deep_link); } catch (_e) {
+      window.open(deep_link, "_blank");
+    }
+  } else {
+    window.open(deep_link, "_blank");
+  }
+  _pollLinkStatus(token, statusLine, linkBtn);
+}
+
+function _pollLinkStatus(token, statusLine, linkBtn) {
+  if (_linkPollTimer) {
+    clearInterval(_linkPollTimer);
+    _linkPollTimer = null;
+  }
+  statusLine.textContent = "Жду подтверждение в Telegram…";
+  const started = Date.now();
+  _linkPollTimer = setInterval(async () => {
+    // 10 min cap — matches the token TTL on the server.
+    if (Date.now() - started > 10 * 60 * 1000) {
+      clearInterval(_linkPollTimer);
+      _linkPollTimer = null;
+      statusLine.textContent = "Время вышло, попробуй ещё раз";
+      linkBtn.disabled = false;
+      return;
+    }
+    let body;
+    try {
+      const res = await fetch(
+        "/auth/link/telegram/status?token=" + encodeURIComponent(token),
+        { credentials: "include" },
+      );
+      body = await res.json();
+    } catch (_e) {
+      return; // transient — try again next tick
+    }
+    if (body.status === "pending" || body.status === "conflict_waiting") {
+      statusLine.textContent =
+        body.status === "conflict_waiting"
+          ? "Подтверди выбор в Telegram…"
+          : "Жду подтверждение в Telegram…";
+      return;
+    }
+    clearInterval(_linkPollTimer);
+    _linkPollTimer = null;
+    if (body.status === "done") {
+      statusLine.textContent = "Готово!";
+      showToast("Telegram привязан");
+      closeSheet();
+      // Re-bind the UI to whichever row survived the merge.
+      bootstrap();
+    } else if (body.status === "expired") {
+      statusLine.textContent = "Ссылка просрочена";
+      linkBtn.disabled = false;
+    } else {
+      statusLine.textContent = "Не получилось";
+      linkBtn.disabled = false;
+    }
+  }, 2000);
+}
+
+// Export for tests/devtools.
+window.openSettingsSheet = openSettingsSheet;
+
 function renderTabBar(activeId, onTabClick) {
   let bar = document.getElementById("tabbar");
   if (!bar) {
@@ -3512,6 +3662,14 @@ async function bootstrap() {
   try {
     const res = await fetch("/auth/me");
     authStatus = res.status;
+    // M18.4: stash the email so the Settings sheet can show the user
+    // which account they're logged into without a second fetch.
+    if (res.ok) {
+      try {
+        const body = await res.json();
+        state.userEmail = body.email || null;
+      } catch (_e) { /* body parse failure is non-fatal */ }
+    }
   } catch (_e) {
     networkError = true;
   }

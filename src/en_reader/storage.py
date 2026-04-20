@@ -32,7 +32,7 @@ import json
 import logging
 import os
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -1590,6 +1590,136 @@ def user_merge(dest_id: int, src_id: int) -> None:
                 (src_cur_book, dest_id),
             )
         conn.execute("DELETE FROM users WHERE id = ?", (src_id,))
+
+
+# ---------- link_tokens (M18.4) ----------
+#
+# One-time tokens the /auth/link/telegram flow mints. The authenticated
+# web session creates a token, the user then taps a ``t.me/<bot>?start=
+# link_<token>`` deep link, and the bot's webhook consumes the token to
+# pair the local user with ``message.from.id``. Status transitions:
+#
+#     pending  → done              (no conflict, no merge needed)
+#     pending  → conflict_waiting  → done   (inline keyboard → callback)
+#     pending  → failed            (bad token, user refused, etc.)
+#
+# TTL is enforced in ``link_token_get`` by comparing ``created_at`` to
+# now minus 10 minutes; stale rows are ignored but not deleted synchronously.
+
+
+LINK_TOKEN_TTL_SECONDS = 600
+
+
+@dataclass
+class LinkToken:
+    """Snapshot of a ``link_tokens`` row the webhook / status poller reads."""
+
+    token: str
+    user_id: int
+    created_at: str
+    status: str  # 'pending' | 'conflict_waiting' | 'done' | 'failed' | 'expired'
+    other_user_id: int | None
+    chat_id: int | None
+    message_id: int | None
+    result: str | None
+
+
+def _row_to_link_token(row: sqlite3.Row) -> LinkToken:
+    return LinkToken(
+        token=row["token"],
+        user_id=int(row["user_id"]),
+        created_at=row["created_at"],
+        status=row["status"],
+        other_user_id=row["other_user_id"],
+        chat_id=row["chat_id"],
+        message_id=row["message_id"],
+        result=row["result"],
+    )
+
+
+def link_token_create(user_id: int) -> str:
+    """Mint a fresh link-flow token for ``user_id``. 32 bytes of urandom."""
+    import secrets
+
+    token = secrets.token_urlsafe(24)
+    conn = get_db()
+    created_at = datetime.now(timezone.utc).isoformat()
+    with conn:
+        conn.execute(
+            "INSERT INTO link_tokens(token, user_id, created_at) VALUES(?, ?, ?)",
+            (token, user_id, created_at),
+        )
+    return token
+
+
+def link_token_get(token: str) -> LinkToken | None:
+    """Return the token row if present and not TTL-expired, else None.
+
+    Expiry is lazy: rows past the TTL still exist in the table (cleanup is
+    nobody's hot path); we just refuse to return them. That keeps the
+    status endpoint's semantics simple — expired == gone — while leaving
+    DELETE for a future broom task.
+    """
+    conn = get_db()
+    row = conn.execute(
+        "SELECT token, user_id, created_at, status, other_user_id, chat_id, "
+        "message_id, result FROM link_tokens WHERE token = ?",
+        (token,),
+    ).fetchone()
+    if row is None:
+        return None
+    # Parse the ISO timestamp we wrote.
+    try:
+        created = datetime.fromisoformat(row["created_at"])
+    except ValueError:
+        return None
+    now = datetime.now(timezone.utc)
+    if (now - created).total_seconds() > LINK_TOKEN_TTL_SECONDS:
+        return None
+    return _row_to_link_token(row)
+
+
+def link_token_update(
+    token: str,
+    *,
+    status: str | None = None,
+    other_user_id: int | None = None,
+    chat_id: int | None = None,
+    message_id: int | None = None,
+    result: str | None = None,
+) -> None:
+    """Partial-update a link token. Only non-None fields are written.
+
+    Writing ``None`` to clear a column isn't needed by the current flow,
+    so skipping None keeps callers from accidentally zeroing out the
+    conflict-keyboard pointers when they only meant to set ``status``.
+    """
+    sets: list[str] = []
+    vals: list[object] = []
+    if status is not None:
+        sets.append("status = ?")
+        vals.append(status)
+    if other_user_id is not None:
+        sets.append("other_user_id = ?")
+        vals.append(other_user_id)
+    if chat_id is not None:
+        sets.append("chat_id = ?")
+        vals.append(chat_id)
+    if message_id is not None:
+        sets.append("message_id = ?")
+        vals.append(message_id)
+    if result is not None:
+        sets.append("result = ?")
+        vals.append(result)
+    if not sets:
+        return
+    vals.append(token)
+    conn = get_db()
+    with conn:
+        conn.execute(
+            f"UPDATE link_tokens SET {', '.join(sets)} WHERE token = ?",
+            tuple(vals),
+        )
 
 
 # ---------- tiny aggregate helpers (M14.1) ----------
