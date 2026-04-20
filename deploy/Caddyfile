@@ -1,0 +1,16 @@
+# en-reader Caddyfile (M17.5).
+#
+# Production config for enreader.zagirnur.dev. Caddy grabs a Let's
+# Encrypt cert via the HTTP-01 challenge on :80, then reverse-proxies
+# all traffic to the uvicorn worker on 127.0.0.1:8080. uvicorn itself
+# never binds a public port — UFW doesn't need to (and doesn't) open
+# :8080 at all.
+enreader.zagirnur.dev {
+  reverse_proxy 127.0.0.1:8080
+  encode gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer-when-downgrade"
+  }
+}

@@ -24,8 +24,20 @@ fi
 
 # 1. Packages.
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  python3.11 python3.11-venv python3-pip git ufw ca-certificates curl gnupg rclone
+# M17.5: support Ubuntu 22.04 (python 3.10) + 24.04 (python 3.12). We
+# install whichever default `python3` the distro ships — our project
+# requires >= 3.11, satisfied by 24.04 out of the box. On 22.04 we
+# additionally pull `python3.11` via the deadsnakes PPA.
+if ! command -v python3.11 >/dev/null 2>&1 && \
+   ! apt-cache show python3.11 >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    python3 python3-venv python3-pip git ufw ca-certificates curl gnupg rclone
+  PYTHON_BIN="python3"
+else
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    python3.11 python3.11-venv python3-pip git ufw ca-certificates curl gnupg rclone
+  PYTHON_BIN="python3.11"
+fi
 
 # 1a. Caddy (M13.4) for TLS termination + reverse proxy to :8080. Installed
 #     unconditionally; the bootstrap leaves /etc/caddy/Caddyfile untouched
@@ -68,7 +80,7 @@ sudo -u "$APP_USER" bash -c "
   set -euo pipefail
   cd '$APP_HOME'
   if [ ! -d .venv ]; then
-    python3.11 -m venv .venv
+    $PYTHON_BIN -m venv .venv
   fi
   .venv/bin/pip install --upgrade pip
   .venv/bin/pip install -e .
@@ -86,6 +98,18 @@ ENV=prod
 EOF
   chown "$APP_USER:$APP_USER" "$APP_HOME/.env"
   chmod 600 "$APP_HOME/.env"
+fi
+
+# 6a. Caddy config (M17.5). Install the prod Caddyfile only if the
+#     operator hasn't hand-edited /etc/caddy/Caddyfile. `cmp -s` returns
+#     true when the files match, so we also refresh when the repo copy
+#     has diverged from a previous bootstrap run.
+if [ -f "$APP_HOME/deploy/Caddyfile" ]; then
+  if [ ! -s /etc/caddy/Caddyfile ] || \
+     ! cmp -s "$APP_HOME/deploy/Caddyfile" /etc/caddy/Caddyfile; then
+    install -m 0644 "$APP_HOME/deploy/Caddyfile" /etc/caddy/Caddyfile
+    systemctl reload caddy || systemctl restart caddy
+  fi
 fi
 
 # 7. systemd units (service + autopull timer from M13.2).
