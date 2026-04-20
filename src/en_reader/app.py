@@ -658,6 +658,22 @@ def api_get_image(
     )
 
 
+@app.get("/api/me/streak")
+def api_me_streak(user: User = Depends(get_current_user)) -> dict:
+    """Return the caller's current streak + today's daily-goal progress.
+
+    M16.8: one endpoint feeds both the Library streak card and the Learn
+    Home daily-goal card — enough for the MVP retention widgets without a
+    separate daily-activity API. ``streak`` counts consecutive UTC days
+    with ≥1 training answer; ``today`` carries ``{target, done, percent}``
+    where ``done`` is today's correct-answer tally.
+    """
+    return {
+        "streak": storage.compute_streak(user.id),
+        "today": storage.today_goal(user.id),
+    }
+
+
 @app.get("/api/me/current-book")
 def api_get_current_book(user: User = Depends(get_current_user)) -> dict:
     """Return the user's current-book pointer (M10.5).

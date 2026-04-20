@@ -350,6 +350,35 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX idx_catalog_level ON catalog_books(level)")
 
 
+def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
+    """M16.8: create the ``daily_activity`` table.
+
+    One row per ``(user_id, date)`` tracks how many training answers the
+    user submitted that calendar day and how many were correct. The table
+    is append-only from the UI's perspective: each answer either inserts
+    a fresh row or increments both counters on the existing row via an
+    ``ON CONFLICT`` upsert. ``date`` is the UTC calendar date as
+    ``YYYY-MM-DD`` — same format we use for ``first_seen_at`` elsewhere,
+    just truncated — so lexical sort matches chronological order and the
+    streak walk-backwards query stays trivial.
+
+    ``UNIQUE(user_id, date)`` makes the upsert work with a single
+    ``ON CONFLICT DO UPDATE`` and the covering index on the same tuple
+    keeps the per-day lookup in :func:`compute_streak` O(log n).
+    """
+    conn.execute("""
+        CREATE TABLE daily_activity (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          date TEXT NOT NULL,
+          words_trained_correct INTEGER NOT NULL DEFAULT 0,
+          words_trained_total INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(user_id, date)
+        )
+        """)
+    conn.execute("CREATE INDEX idx_daily_user_date ON daily_activity(user_id, date)")
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
@@ -358,6 +387,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v4_to_v5,
     _migrate_v5_to_v6,
     _migrate_v6_to_v7,
+    _migrate_v7_to_v8,
 ]
 
 
@@ -590,6 +620,41 @@ def record_training_result(
                 lemma.lower(),
             ),
         )
+        # M16.8: stamp the per-day activity row inside the same
+        # transaction. Both counters bump on every answer so a mix of
+        # correct/wrong still counts toward streak preservation; only
+        # ``words_trained_correct`` gates the daily goal. ``date`` is the
+        # UTC calendar date so the walk-backwards streak query stays
+        # timezone-invariant.
+        _record_daily_activity(conn, user_id, now, correct=correct)
+
+
+def _record_daily_activity(
+    conn: sqlite3.Connection,
+    user_id: int,
+    now: datetime,
+    *,
+    correct: bool,
+) -> None:
+    """Upsert the ``daily_activity`` row for ``now``'s UTC date.
+
+    Increments ``words_trained_total`` unconditionally, and
+    ``words_trained_correct`` only when ``correct`` is ``True``. Called
+    from :func:`record_training_result` inside its ``with conn:`` block
+    so the dictionary row update and this counter bump either both land
+    or both roll back.
+    """
+    today = now.date().isoformat()
+    delta_correct = 1 if correct else 0
+    conn.execute(
+        "INSERT INTO daily_activity("
+        "user_id, date, words_trained_correct, words_trained_total"
+        ") VALUES(?, ?, ?, 1) "
+        "ON CONFLICT(user_id, date) DO UPDATE SET "
+        "words_trained_total = words_trained_total + 1, "
+        "words_trained_correct = words_trained_correct + ?",
+        (user_id, today, delta_correct, delta_correct),
+    )
 
 
 def pick_training_pool(
@@ -776,6 +841,76 @@ def dict_list(
             }
         )
     return out
+
+
+# ---------- daily streak + goal (M16.8) ----------
+
+
+# Fixed target for the daily training goal. Kept as a module-level constant
+# so the UI and the /api/me/streak response agree without threading a
+# settings object through; if a future milestone makes this per-user,
+# flip this to a DAO lookup and keep the public shape identical.
+DAILY_GOAL_TARGET = 10
+
+
+def compute_streak(user_id: int) -> int:
+    """Return the consecutive-days streak ending at today (UTC).
+
+    Walk rule:
+
+    * If today has a ``daily_activity`` row (≥1 answer submitted today),
+      start the count at 1 and walk yesterday-backward.
+    * If today is empty, *do not* reset — start the walk at yesterday.
+      The user just opening the app at 8am on day N shouldn't see their
+      day-(N-1) work evaporate; the streak represents the chain up to
+      and including the most recent active day, not strictly "today".
+    * Stop on the first gap (a calendar day with no row).
+
+    We fetch the activity dates in one round-trip (descending, capped at
+    365) and scan the in-memory list — cheaper than one SELECT per
+    day-walk step and well within the working-set of any human user.
+    """
+    conn = get_db()
+    today = datetime.now(timezone.utc).date()
+    rows = conn.execute(
+        "SELECT date FROM daily_activity WHERE user_id = ? " "ORDER BY date DESC LIMIT 365",
+        (user_id,),
+    ).fetchall()
+    active_dates = {row["date"] for row in rows}
+    if not active_dates:
+        return 0
+
+    # Pick the starting point per the "today empty" rule above.
+    if today.isoformat() in active_dates:
+        cursor = today
+    else:
+        cursor = today - timedelta(days=1)
+
+    streak = 0
+    while cursor.isoformat() in active_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+def today_goal(user_id: int) -> dict:
+    """Return the daily-goal shape for ``user_id``: ``{target, done, percent}``.
+
+    ``done`` is ``words_trained_correct`` from today's ``daily_activity``
+    row (0 if the user hasn't answered anything yet). ``percent`` is
+    clamped to 100 so an over-achieving day still renders as a full bar
+    rather than overflow.
+    """
+    conn = get_db()
+    today = datetime.now(timezone.utc).date().isoformat()
+    row = conn.execute(
+        "SELECT words_trained_correct FROM daily_activity " "WHERE user_id = ? AND date = ?",
+        (user_id, today),
+    ).fetchone()
+    done = int(row["words_trained_correct"]) if row else 0
+    target = DAILY_GOAL_TARGET
+    percent = min(100, done * 100 // target) if target > 0 else 0
+    return {"target": target, "done": done, "percent": percent}
 
 
 # ---------- book_images DAO ----------

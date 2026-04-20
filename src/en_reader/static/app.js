@@ -68,9 +68,9 @@ const state = {
   // M16.6: training session. `state.learn` is null outside the
   // learnCard flow; once the session starts it carries
   // {pool, idx, correct, feedback, pickedWrong, done}. `state.learn`
-  // is ephemeral — never persisted. `state.learnStats` is a
-  // placeholder for the daily-goal counter (M16.8 will wire the real
-  // value); rendering falls back to 0 when null.
+  // is ephemeral — never persisted. `state.learnStats` is a legacy
+  // placeholder kept around for back-compat with mid-flight reads;
+  // M16.8 now drives the real counter via `state.streak` below.
   learn: null,
   learnStats: null,
   // M16.7: flashcards session. `state.flash` mirrors `state.learn`
@@ -78,6 +78,12 @@ const state = {
   // with {pool, idx, flipped, correct, done}. Same backend; the
   // mode difference is purely UI (flip card + binary Knew/Didn't).
   flash: null,
+  // M16.8: streak + daily-goal payload from GET /api/me/streak.
+  // `null` = not fetched yet (renders a neutral placeholder);
+  // object = {streak:N, today:{target,done,percent}}. Cleared on
+  // leaving the library and on leaving any learn screen so a revisit
+  // refetches — stats drift mid-session otherwise.
+  streak: null,
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -214,6 +220,10 @@ function navigate(path) {
   // Leaving the library? Forget the cached listing so a later visit refetches.
   if (state.view === "library" && parsed.view !== "library") {
     patch.books = undefined;
+    // M16.8: drop the streak card cache alongside the book list so
+    // answers posted from the learn screens show up on next library
+    // entry.
+    patch.streak = null;
   }
   // M16.4: leaving the dictionary screen drops its caches so a revisit
   // refetches (counters could have changed mid-session).
@@ -239,6 +249,9 @@ function navigate(path) {
     patch.learn = null;
     patch.learnStats = null;
     patch.flash = null;
+    // M16.8: same reason as library — streak counters may have moved
+    // during the session we're leaving, so force a refetch on reentry.
+    patch.streak = null;
   }
   setState(patch);
 }
@@ -254,6 +267,7 @@ function onPopState() {
   }
   if (state.view === "library" && parsed.view !== "library") {
     patch.books = undefined;
+    patch.streak = null;
   }
   if (state.view === "dictionary" && parsed.view !== "dictionary") {
     patch.dictWords = null;
@@ -275,6 +289,7 @@ function onPopState() {
     patch.learn = null;
     patch.learnStats = null;
     patch.flash = null;
+    patch.streak = null;
   }
   setState(patch);
 }
@@ -448,6 +463,21 @@ function renderLibrary() {
     return;
   }
 
+  // M16.8: kick off the streak fetch in parallel with the library
+  // render. Failures are non-fatal — the card just stays hidden.
+  if (state.streak === null) {
+    apiGet("/api/me/streak")
+      .then((data) => {
+        if (state.view !== "library") return;
+        setState({ streak: data });
+      })
+      .catch(() => {
+        // 401 on a stale session would've redirected the user at
+        // bootstrap already; anything else is transient and the card
+        // will retry on next library entry.
+      });
+  }
+
   root.innerHTML = "";
   const main = document.createElement("main");
   main.className = "library";
@@ -484,6 +514,35 @@ function renderLibrary() {
   header.appendChild(h1);
   header.appendChild(headerRight);
   main.appendChild(header);
+
+  // M16.8: streak card sits between the header and the grid so the
+  // motivational context is visible above the fold. We only render
+  // when `state.streak` is loaded — skips the card entirely on first
+  // paint (the async fetch above will re-render once the data lands)
+  // and when the user has no activity yet (streak=0, done=0).
+  if (state.streak && (state.streak.streak > 0 || state.streak.today.done > 0)) {
+    const streakCard = document.createElement("div");
+    streakCard.className = "streak-card";
+
+    const fireBox = document.createElement("div");
+    fireBox.className = "streak-card-icon";
+    fireBox.innerHTML = _ICONS.fire;
+    streakCard.appendChild(fireBox);
+
+    const txt = document.createElement("div");
+    txt.className = "streak-card-text";
+    const title = document.createElement("div");
+    title.className = "streak-card-title";
+    title.textContent = `${state.streak.streak} дней подряд`;
+    const sub = document.createElement("div");
+    sub.className = "streak-card-sub";
+    sub.textContent = `${state.streak.today.done} слов сегодня`;
+    txt.appendChild(title);
+    txt.appendChild(sub);
+    streakCard.appendChild(txt);
+
+    main.appendChild(streakCard);
+  }
 
   const grid = document.createElement("div");
   grid.className = "grid";
@@ -2133,6 +2192,19 @@ function renderLearnHome() {
   const main = document.createElement("main");
   main.className = "learn-home";
 
+  // M16.8: kick off the streak fetch on first entry. Same pattern as
+  // the library card — re-renders on success, silently hides on
+  // failure. Happens before we render the card below so the pbar /
+  // text draw with live numbers on the second pass.
+  if (state.streak === null) {
+    apiGet("/api/me/streak")
+      .then((data) => {
+        if (state.view !== "learnHome") return;
+        setState({ streak: data });
+      })
+      .catch(() => {});
+  }
+
   const uplabel = document.createElement("div");
   uplabel.className = "uplabel";
   uplabel.textContent = "Тренировка";
@@ -2143,15 +2215,18 @@ function renderLearnHome() {
   h1.textContent = "Что учим сегодня";
   main.appendChild(h1);
 
-  // Daily-goal card — placeholder until M16.8 wires the real streak +
-  // count. We derive `done` from `state.learnStats.done` if present and
-  // fall back to 0, so the card renders identically on a cold load.
+  // M16.8: daily-goal card now reads from `state.streak.today` when
+  // available. Cold load (streak still fetching) falls back to zeros
+  // so the card shape is stable and the pbar starts empty; it repaints
+  // as soon as the fetch resolves via `setState`.
+  const goalTotal =
+    state.streak && state.streak.today ? state.streak.today.target : 10;
   const doneToday =
-    state.learnStats && typeof state.learnStats.done === "number"
-      ? state.learnStats.done
+    state.streak && state.streak.today ? state.streak.today.done : 0;
+  const pct =
+    state.streak && state.streak.today
+      ? state.streak.today.percent
       : 0;
-  const goalTotal = 10;
-  const pct = Math.max(0, Math.min(100, Math.round((doneToday / goalTotal) * 100)));
 
   const goal = document.createElement("div");
   goal.className = "daily-goal";

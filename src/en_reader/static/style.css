@@ -552,6 +552,35 @@ body.with-tabbar #root { padding-bottom: 82px; }
 }
 .learn-modes-label { margin-bottom: 10px; }
 
+/* --- M16.8: library streak card. --------------------------------------- */
+/* Lives between the library header and the grid. Softer background than
+   `.daily-goal` so it reads as a passive motivational chip rather than a
+   CTA; tighter padding matches the library-header rhythm. */
+.streak-card {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+.streak-card-icon {
+  width: 32px; height: 32px; border-radius: 10px;
+  background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.streak-card-icon svg { width: 18px; height: 18px; }
+.streak-card-text { min-width: 0; }
+.streak-card-title {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.streak-card-sub {
+  font-size: 11px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
 .mode-card {
   width: 100%;
   display: flex; align-items: center; gap: 14px;
