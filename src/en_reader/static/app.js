@@ -229,11 +229,13 @@ function navigate(path) {
   // M16.6/M16.7: leaving any learn screen drops the session state
   // so a revisit always starts fresh. Results are persisted
   // server-side after each answer, not in `state.learn` or
-  // `state.flash`.
+  // `state.flash`. We also clear on entry to /learn (home) so the
+  // "Вернуться" button on the done screen doesn't leave a completed
+  // session in memory that re-renders on a re-entry to a mode.
   const _isLearnView = (v) =>
     v === "learnHome" || v === "learnCard" || v === "learnFlash";
   const leavingLearn = _isLearnView(state.view) && !_isLearnView(parsed.view);
-  if (leavingLearn) {
+  if (leavingLearn || parsed.view === "learnHome") {
     patch.learn = null;
     patch.learnStats = null;
     patch.flash = null;
@@ -263,11 +265,13 @@ function onPopState() {
     patch.catalog = null;
   }
   // M16.6/M16.7: leaving any learn screen drops the session state so
-  // a revisit always starts fresh.
+  // a revisit always starts fresh. Same "clear on entry to home" rule
+  // as navigate(): prevents the done screen from persisting via
+  // browser back/forward.
   const _isLearnView = (v) =>
     v === "learnHome" || v === "learnCard" || v === "learnFlash";
   const leavingLearn = _isLearnView(state.view) && !_isLearnView(parsed.view);
-  if (leavingLearn) {
+  if (leavingLearn || parsed.view === "learnHome") {
     patch.learn = null;
     patch.learnStats = null;
     patch.flash = null;
