@@ -33,7 +33,14 @@ def test_api_books_after_seed(client: TestClient) -> None:
 
     body = client.get("/api/books").json()
     assert [b["id"] for b in body] == [id2, id1]
-    assert set(body[0].keys()) == {"id", "title", "author", "total_pages", "has_cover"}
+    assert set(body[0].keys()) == {
+        "id",
+        "title",
+        "author",
+        "total_pages",
+        "has_cover",
+        "cover_preset",
+    }
 
 
 def test_delete_book_via_api(client: TestClient) -> None:

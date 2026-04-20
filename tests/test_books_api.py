@@ -34,7 +34,14 @@ def test_list_two_books_newest_first(client: TestClient) -> None:
     assert body[0]["id"] == id2
     assert body[1]["id"] == id1
     # Shape sanity on the first item.
-    assert set(body[0].keys()) == {"id", "title", "author", "total_pages", "has_cover"}
+    assert set(body[0].keys()) == {
+        "id",
+        "title",
+        "author",
+        "total_pages",
+        "has_cover",
+        "cover_preset",
+    }
     assert body[0]["total_pages"] >= 1
 
 

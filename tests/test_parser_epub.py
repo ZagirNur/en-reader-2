@@ -190,3 +190,47 @@ def test_cover_not_in_text(sample_epub_bytes: bytes) -> None:
     assert f"IMG{pb.cover.image_id}" not in pb.text
     # And the cover id is not on any inline image either.
     assert pb.cover.image_id not in {img.image_id for img in pb.images}
+
+
+def test_relative_parent_src_resolves() -> None:
+    """Chapter under ``text/`` referencing ``../images/fig.png`` must resolve
+    to the canonical ``images/fig.png`` so the marker lands in text.
+
+    Regression for the ``_resolve_src`` bug that left ``..`` segments
+    uncollapsed and silently dropped any image referenced this way.
+    """
+    book = epub.EpubBook()
+    book.set_identifier("parent-src")
+    book.set_title("Parent-Src")
+    book.set_language("en")
+    book.add_author("Jane Doe")
+
+    img = epub.EpubImage(
+        uid="fig1",
+        file_name="images/fig1.png",
+        media_type="image/png",
+        content=_INLINE_PNG,
+    )
+    book.add_item(img)
+
+    chap = epub.EpubHtml(title="Chapter 1", file_name="text/chap1.xhtml", lang="en")
+    chap.content = (
+        "<html xmlns='http://www.w3.org/1999/xhtml'>"
+        "<head><title>Chapter 1</title></head>"
+        "<body><p>Before <img src='../images/fig1.png' alt='x'/> after.</p></body>"
+        "</html>"
+    )
+    book.add_item(chap)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", chap]
+    book.toc = (chap,)
+
+    import io as _io
+
+    buf = _io.BytesIO()
+    epub.write_epub(buf, book)
+    pb = parse_epub(buf.getvalue(), "parent.epub")
+    markers = re.findall(r"IMG[0-9a-f]{12}", pb.text)
+    assert len(markers) == 1, f"expected one marker, got text={pb.text!r}"
+    assert len(pb.images) == 1

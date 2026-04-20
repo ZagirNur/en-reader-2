@@ -218,6 +218,12 @@ def _extract_chapter_text(
 def _resolve_src(chapter_filename: str, src: str) -> str:
     """Resolve an ``<img src>`` against the chapter's archive path.
 
+    ``posixpath.normpath`` collapses ``..`` segments so the result matches
+    the canonical archive key (``OEBPS/images/x.png``), which is what
+    ebooklib reports as ``EpubImage.file_name``. Without normalization
+    ``text/../images/x.png`` would never match and the image would be
+    silently dropped.
+
     Examples
     --------
     >>> _resolve_src("OEBPS/chap1.xhtml", "images/x.png")
@@ -227,9 +233,12 @@ def _resolve_src(chapter_filename: str, src: str) -> str:
     >>> _resolve_src("chap1.xhtml", "x.png")
     'x.png'
     """
+    import posixpath
+
     chapter_dir = PurePosixPath(chapter_filename).parent
-    resolved = (chapter_dir / src).as_posix()
-    # Collapse a leading "./" or "/" if any.
+    joined = posixpath.join(str(chapter_dir), src) if src else str(chapter_dir)
+    resolved = posixpath.normpath(joined)
+    # ``normpath('')`` is ``'.'``; drop leading ``./`` or ``/``.
     if resolved.startswith("./"):
         resolved = resolved[2:]
     return resolved.lstrip("/")

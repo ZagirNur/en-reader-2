@@ -23,6 +23,10 @@ const state = {
   // `authError` renders a user-friendly message under the form.
   authMode: "login",
   authError: null,
+  // M12.4: filename of the book currently being uploaded. Drives the
+  // skeleton card that renders in the library grid just before the
+  // `.add-card` tile. Null when no upload is in flight.
+  uploadingFilename: null,
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -201,6 +205,46 @@ async function loadBookContent(bookId, offset = 0, limit = 1) {
   );
 }
 
+// M12.4: POST a File to /api/books/upload, then refresh the library and
+// navigate into the new book on success. Errors surface as toasts —
+// there's no progress indicator beyond the skeleton card (spec §Что НЕ
+// делать forbids per-upload progress).
+async function uploadBook(file) {
+  state.uploadingFilename = file.name;
+  render();
+
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const resp = await fetch("/api/books/upload", {
+      method: "POST",
+      body: form,
+    });
+    if (!resp.ok) {
+      // The server responds with `{detail: "..."}` for HTTPException;
+      // fall back to the HTTP status text if the body isn't JSON.
+      const err = await resp.json().catch(() => ({ detail: `${resp.status}` }));
+      throw new Error(err.detail || resp.statusText || `${resp.status}`);
+    }
+    const { book_id } = await resp.json();
+    state.uploadingFilename = null;
+    // Refresh the library so the newly-saved book shows up with the right
+    // cover / preset before we even leave the grid — the reader view
+    // fetches /api/books itself on mount, so this is belt-and-braces.
+    try {
+      const books = await apiGet("/api/books");
+      state.books = Array.isArray(books) ? books : [];
+    } catch (_e) {
+      // Non-fatal: the library will refetch on next visit.
+    }
+    navigate(`/books/${book_id}`);
+  } catch (e) {
+    state.uploadingFilename = null;
+    toast(`Не удалось загрузить: ${e.message}`);
+    render();
+  }
+}
+
 // --- views ---
 // Long-tap timer for `.card` touch interactions on mobile. Kept at module
 // scope so `touchmove`/`touchend` listeners can cancel the pending timeout.
@@ -348,6 +392,34 @@ function renderLibrary() {
     }
   }
 
+  // M12.4: skeleton "uploading" card lands right before the add-card
+  // tile so the user sees their upload slot-in at the same visual
+  // position where the new book will end up post-refresh.
+  if (state.uploadingFilename) {
+    const skel = document.createElement("div");
+    skel.className = "card uploading";
+    const skelCover = document.createElement("div");
+    skelCover.className = "cover-placeholder";
+    const spinner = document.createElement("div");
+    spinner.className = "spinner";
+    skelCover.appendChild(spinner);
+    skel.appendChild(skelCover);
+
+    const skelMeta = document.createElement("div");
+    skelMeta.className = "meta";
+    const skelTitle = document.createElement("div");
+    skelTitle.className = "title";
+    skelTitle.textContent = "Загружается…";
+    const skelAuthor = document.createElement("div");
+    skelAuthor.className = "author";
+    // XSS discipline: filename comes from the user's OS, so textContent only.
+    skelAuthor.textContent = state.uploadingFilename;
+    skelMeta.appendChild(skelTitle);
+    skelMeta.appendChild(skelAuthor);
+    skel.appendChild(skelMeta);
+    grid.appendChild(skel);
+  }
+
   const addCard = document.createElement("button");
   addCard.type = "button";
   addCard.className = "add-card";
@@ -373,7 +445,20 @@ function renderLibrary() {
     if (e.target && e.target.closest && e.target.closest(".card-menu")) return;
     const add = e.target.closest(".add-card");
     if (add) {
-      toast("Upload — скоро (M12.4)");
+      // M12.4: spawn a hidden <input type=file>, click it, pass the
+      // chosen file to uploadBook. No `accept` attribute — iOS Safari
+      // rejects valid .fb2 files when we constrain on MIME.
+      const input = document.createElement("input");
+      input.type = "file";
+      input.style.display = "none";
+      input.addEventListener("change", (ev) => {
+        const f = ev.target.files && ev.target.files[0];
+        if (f) uploadBook(f);
+        // Clean up the input once we've captured the file.
+        if (input.parentNode) input.parentNode.removeChild(input);
+      });
+      document.body.appendChild(input);
+      input.click();
       return;
     }
     const card = e.target.closest(".card[data-book-id]");

@@ -22,7 +22,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -37,6 +37,7 @@ from en_reader.auth import (
 )
 from en_reader.metrics import counters
 from en_reader.models import BookMeta, User
+from en_reader.parsers import UnsupportedFormatError, parse_book
 from en_reader.translate import TranslateError, translate_one
 
 load_dotenv()
@@ -110,6 +111,27 @@ class BookListItem(BaseModel):
     author: str | None
     total_pages: int
     has_cover: bool
+    # M12.4 (design spec): deterministic gradient-preset class name for
+    # books without a real cover. Null when ``has_cover`` is True. The
+    # mapping is ``hash(book_id) % 7`` so the same book always renders in
+    # the same colour. Actual CSS for these presets lands with M16.5.
+    cover_preset: str | None = None
+
+
+# Seven cover presets from the design spec — keep in sync with the CSS
+# tokens documented on the design-spec side.
+_COVER_PRESETS = ("olive", "clay", "ink", "mauve", "mustard", "sage", "rose")
+
+
+def _compute_cover_preset(book_id: int) -> str:
+    """Return ``c-<preset>`` for a given book id (deterministic)."""
+    return f"c-{_COVER_PRESETS[hash(str(book_id)) % len(_COVER_PRESETS)]}"
+
+
+# M12.4: hard cap on upload size. FastAPI / Starlette don't enforce a
+# body-length ceiling on their own — the route reads everything into
+# memory before we can inspect it, so the check lives next to the read.
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
 
 
 class ProgressIn(BaseModel):
@@ -205,16 +227,22 @@ def api_books_list(user: User = Depends(get_current_user)) -> list[BookListItem]
     compute it defensively so M12 doesn't have to touch this handler.
     """
     metas = storage.book_list(user_id=user.id)
-    return [
-        BookListItem(
-            id=m.id,
-            title=m.title,
-            author=m.author,
-            total_pages=m.total_pages,
-            has_cover=bool(m.cover_path),
+    items: list[BookListItem] = []
+    for m in metas:
+        has_cover = bool(m.cover_path)
+        items.append(
+            BookListItem(
+                id=m.id,
+                title=m.title,
+                author=m.author,
+                total_pages=m.total_pages,
+                has_cover=has_cover,
+                # Only emit a preset when there isn't a real cover — the
+                # frontend uses the preset as a gradient tile fallback.
+                cover_preset=None if has_cover else _compute_cover_preset(m.id),
+            )
         )
-        for m in metas
-    ]
+    return items
 
 
 @app.delete("/api/books/{book_id}")
@@ -484,6 +512,62 @@ def auth_me(request: Request) -> dict:
         request.session.clear()
         raise HTTPException(status_code=401)
     return {"email": user.email}
+
+
+# ---------- upload (M12.4) ----------
+
+
+@app.post("/api/books/upload")
+async def api_book_upload(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Accept a multipart upload and run it through the parser pipeline.
+
+    Pipeline: ``UploadFile.read()`` → :func:`parse_book` (dispatches by
+    filename extension with a magic-byte fallback) → :func:`storage.book_save`
+    (NLP + chunker + persist, with cover-to-disk). Size is checked
+    immediately after read: over :data:`MAX_UPLOAD_BYTES` → 413, empty
+    → 400. ``UnsupportedFormatError`` surfaces as 400 with the parser's
+    own message; any other parser exception logs the traceback and
+    returns a generic 400. Persistence failures (disk full, DB locked)
+    log and return 500. Declared **before** the ``/{full_path:path}``
+    catch-all so FastAPI's router matches this route first.
+    """
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="file too large (max 200 MB)")
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="empty file")
+
+    try:
+        parsed = parse_book(data, file.filename or "book")
+    except UnsupportedFormatError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception:
+        # We've seen corrupt fb2/epub hit lxml / zipfile with exotic
+        # exception types; log the full trace for debugging but keep
+        # the client-facing message generic.
+        logger.exception("parse failed for upload filename=%r", file.filename)
+        raise HTTPException(status_code=400, detail="failed to parse book")
+
+    try:
+        book_id = storage.book_save(parsed, user_id=user.id)
+    except Exception:
+        logger.exception("book_save failed for upload filename=%r", file.filename)
+        raise HTTPException(status_code=500, detail="failed to save book")
+
+    meta = storage.book_meta(book_id, user_id=user.id)
+    # meta should never be None right after a successful book_save, but
+    # guard defensively so a racing DELETE doesn't turn into an
+    # AttributeError.
+    if meta is None:
+        raise HTTPException(status_code=500, detail="failed to save book")
+    return {
+        "book_id": book_id,
+        "title": meta.title,
+        "total_pages": meta.total_pages,
+    }
 
 
 @app.get("/{full_path:path}")

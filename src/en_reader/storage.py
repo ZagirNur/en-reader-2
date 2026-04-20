@@ -471,6 +471,24 @@ def _compute_page_images(page_text: str, id_to_mime: dict[str, str]) -> list[Pag
     return out
 
 
+# Mapping from common image MIME types to the on-disk extension we use
+# under ``data/covers/``. The fallback is ``.png`` (matches the most
+# common embedded cover format and keeps UA-level MIME sniffing happy).
+_COVER_EXT_BY_MIME = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
+
+
+def _cover_ext_for_mime(mime: str) -> str:
+    """Return the filesystem extension (no dot) for a cover MIME type."""
+    return _COVER_EXT_BY_MIME.get(mime.lower(), "png")
+
+
 def book_save(parsed: "ParsedBook", *, user_id: int = SEED_USER_ID) -> int:
     """Run the full analyse + chunk + persist pipeline for ``parsed``.
 
@@ -480,6 +498,14 @@ def book_save(parsed: "ParsedBook", *, user_id: int = SEED_USER_ID) -> int:
     them before calling this); this function takes care of masking those
     marker tokens before chunking and recomputing per-page ``PageImage``
     lists post-chunk by scanning each page's ``text``.
+
+    M12.4: when ``parsed.cover`` is non-None, the cover bytes are written
+    to ``data/covers/<book_id>.<ext>`` and the ``books.cover_path`` column
+    is updated in the same transaction. If the disk write fails, the
+    transaction rolls back and the file is removed so the DB never
+    references a missing cover. The ``books`` insert reserves the row
+    first so we know the id; the cover write and the ``UPDATE`` that
+    records ``cover_path`` both live inside the same ``with conn:``.
     """
     # Lazy imports keep the storage module importable without paying the
     # spaCy model-load cost during migrations or simple DAO use.
@@ -496,40 +522,62 @@ def book_save(parsed: "ParsedBook", *, user_id: int = SEED_USER_ID) -> int:
 
     created_at = datetime.now(timezone.utc).isoformat()
     conn = get_db()
-    with conn:
-        cur = conn.execute(
-            "INSERT INTO books(user_id, title, author, language, source_format, "
-            "source_bytes_size, total_pages, cover_path, created_at) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                user_id,
-                parsed.title,
-                parsed.author,
-                parsed.language,
-                parsed.source_format,
-                parsed.source_bytes_size,
-                len(pages),
-                None,
-                created_at,
-            ),
-        )
-        book_id = int(cur.lastrowid)
-        for p in pages:
-            conn.execute(
-                "INSERT INTO pages(book_id, page_index, text, tokens_gz, "
-                "units_gz, images_gz) VALUES(?, ?, ?, ?, ?, ?)",
+    cover_path_written: Path | None = None
+    try:
+        with conn:
+            cur = conn.execute(
+                "INSERT INTO books(user_id, title, author, language, source_format, "
+                "source_bytes_size, total_pages, cover_path, created_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    book_id,
-                    p.page_index,
-                    p.text,
-                    _pack([asdict(t) for t in p.tokens]),
-                    _pack([asdict(u) for u in p.units]),
-                    _pack([asdict(i) for i in p.images]),
+                    user_id,
+                    parsed.title,
+                    parsed.author,
+                    parsed.language,
+                    parsed.source_format,
+                    parsed.source_bytes_size,
+                    len(pages),
+                    None,
+                    created_at,
                 ),
             )
-        for img in parsed.images:
-            image_save(book_id, img.image_id, img.mime_type, img.data)
-        # cover_path handling lands with the real parsers in M12.
+            book_id = int(cur.lastrowid)
+            for p in pages:
+                conn.execute(
+                    "INSERT INTO pages(book_id, page_index, text, tokens_gz, "
+                    "units_gz, images_gz) VALUES(?, ?, ?, ?, ?, ?)",
+                    (
+                        book_id,
+                        p.page_index,
+                        p.text,
+                        _pack([asdict(t) for t in p.tokens]),
+                        _pack([asdict(u) for u in p.units]),
+                        _pack([asdict(i) for i in p.images]),
+                    ),
+                )
+            for img in parsed.images:
+                image_save(book_id, img.image_id, img.mime_type, img.data)
+
+            if parsed.cover is not None:
+                covers_dir = Path("data/covers")
+                covers_dir.mkdir(parents=True, exist_ok=True)
+                ext = _cover_ext_for_mime(parsed.cover.mime_type)
+                cover_path = covers_dir / f"{book_id}.{ext}"
+                cover_path.write_bytes(parsed.cover.data)
+                cover_path_written = cover_path
+                conn.execute(
+                    "UPDATE books SET cover_path = ? WHERE id = ?",
+                    (str(cover_path), book_id),
+                )
+    except Exception:
+        # Roll back the cover file if the transaction aborts — otherwise
+        # a failed book_save would leak a stray image into data/covers/.
+        if cover_path_written is not None:
+            try:
+                cover_path_written.unlink()
+            except (FileNotFoundError, OSError):
+                pass
+        raise
     return book_id
 
 
