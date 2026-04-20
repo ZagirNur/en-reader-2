@@ -79,6 +79,17 @@ if [ "$reload_systemd" = "1" ]; then
   systemctl daemon-reload
 fi
 
+# 5a. Caddyfile (M17.6) — reverse-proxy config lives in the repo so a
+#     pure push-to-main can swap "auto HTTPS" for "plain HTTP behind
+#     Cloudflare" without a manual SSH session. Reload, don't restart,
+#     so in-flight requests don't drop.
+if [ -f "$APP_HOME/deploy/Caddyfile" ] && \
+   ! cmp -s "$APP_HOME/deploy/Caddyfile" /etc/caddy/Caddyfile; then
+  echo "[autopull] Caddyfile changed — reinstalling"
+  install -m 0644 "$APP_HOME/deploy/Caddyfile" /etc/caddy/Caddyfile
+  systemctl reload caddy || systemctl restart caddy
+fi
+
 # 6. Restart the app. Uvicorn downtime is a few seconds — acceptable on MVP.
 systemctl restart en-reader
 
