@@ -1,21 +1,39 @@
-# en-reader Caddyfile (M17.5).
+# en-reader Caddyfile (M17.5/M17.6/M17.7).
 #
 # Cloudflare terminates TLS in front of the origin and proxies to us
 # over HTTP (port 80). Caddy here is a plain-HTTP reverse proxy to the
 # uvicorn worker on 127.0.0.1:8080 — no auto-TLS, no HTTPS listener,
-# no HTTP→HTTPS redirect (which would loop through Cloudflare). HSTS
-# and the rest of the security headers are set here too so they travel
-# through CF untouched.
+# no HTTP→HTTPS redirect (which would loop through Cloudflare).
+#
+# M17.7 adds /_debug/ paths that survive even when uvicorn is down, so a
+# busted cloud-init or crashed app is still diagnosable from the
+# sandbox over HTTP without an SSH session. The paths read log files
+# that were scrubbed of secrets at write time (bootstrap flips off
+# `set -x` before writing .env).
 {
   auto_https off
 }
 
 :80 {
-  reverse_proxy 127.0.0.1:8080
-  encode gzip
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains"
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "no-referrer-when-downgrade"
+  @debug_log path /_debug/log
+  handle @debug_log {
+    root * /var/log
+    rewrite * /en-reader-bootstrap.log
+    file_server
+  }
+  @debug_status path /_debug/status
+  handle @debug_status {
+    root * /var/log
+    rewrite * /status.txt
+    file_server
+  }
+  handle {
+    reverse_proxy 127.0.0.1:8080
+    encode gzip
+    header {
+      Strict-Transport-Security "max-age=31536000; includeSubDomains"
+      X-Content-Type-Options "nosniff"
+      Referrer-Policy "no-referrer-when-downgrade"
+    }
   }
 }
