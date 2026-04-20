@@ -193,8 +193,7 @@ def _seed_v5(conn: sqlite3.Connection) -> None:
             ("img0000000002", b"\x89PNG-fixture-2"),
         ]:
             conn.execute(
-                "INSERT INTO book_images(book_id, image_id, mime_type, data) "
-                "VALUES(?, ?, ?, ?)",
+                "INSERT INTO book_images(book_id, image_id, mime_type, data) " "VALUES(?, ?, ?, ?)",
                 (1, image_id, "image/png", payload),
             )
         # 2 books × 8+7 = 15 pages (matches v3 counts).

@@ -304,9 +304,7 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     they stay ``None`` in the API response and we do not persist them.
     """
     conn.execute("ALTER TABLE user_dictionary ADD COLUMN status TEXT NOT NULL DEFAULT 'new'")
-    conn.execute(
-        "ALTER TABLE user_dictionary ADD COLUMN correct_streak INTEGER NOT NULL DEFAULT 0"
-    )
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN correct_streak INTEGER NOT NULL DEFAULT 0")
     conn.execute("ALTER TABLE user_dictionary ADD COLUMN wrong_count INTEGER NOT NULL DEFAULT 0")
     conn.execute("ALTER TABLE user_dictionary ADD COLUMN last_reviewed_at TEXT")
     conn.execute("ALTER TABLE user_dictionary ADD COLUMN next_review_at TEXT")
