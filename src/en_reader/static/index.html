@@ -7,7 +7,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Instrument+Serif&display=swap">
-  <link rel="stylesheet" href="/static/style.css">
+  <!-- M18.2c: ?v= cache-buster — Cloudflare cached /static/{app.js,style.css}
+       on the 4h default TTL and every deploy got held up waiting for it to
+       expire. The backend now sends Cache-Control: no-store, but entries
+       already in the CF edge won't re-fetch until TTL; bumping the query
+       string forces a fresh URL the edge hasn't seen. -->
+  <link rel="stylesheet" href="/static/style.css?v=m18.2c">
   <!-- M18.1: Telegram Mini-App SDK. Exposes window.Telegram.WebApp only
        when the page renders inside the Telegram WebView — in a regular
        browser the script loads but the namespace stays undefined. -->
@@ -39,6 +44,6 @@
       <div class="homebar"></div>
     </div>
   </div>
-  <script src="/static/app.js" type="module"></script>
+  <script src="/static/app.js?v=m18.2c" type="module"></script>
 </body>
 </html>
