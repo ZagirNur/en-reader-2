@@ -1,5 +1,7 @@
 # en-reader
 
+[![CI](https://github.com/ZagirNur/en-reader-2/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ZagirNur/en-reader-2/actions/workflows/ci.yml)
+
 English reader with inline Russian translations for B1-C1 learners.
 
 ## Как запустить

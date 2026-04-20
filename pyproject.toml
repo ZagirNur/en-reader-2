@@ -24,6 +24,13 @@ dependencies = [
     "lxml>=5.0",
     "ebooklib>=0.18",
     "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+# M15.7: `pip install -e ".[dev]"` pulls every tool needed to run the suite
+# locally and in CI (ruff + black + pytest family). Runtime installs skip
+# these — the production unit file runs `pip install -e .` without `[dev]`.
+dev = [
     "pytest",
     "pytest-cov>=4.1",
     "pytest-playwright>=0.5",
