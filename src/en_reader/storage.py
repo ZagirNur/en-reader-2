@@ -315,6 +315,41 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    """M16.5: create the ``catalog_books`` table.
+
+    Public-domain reading material the seed script (``scripts/seed_catalog.py``)
+    pre-loads so freshly-registered users always have something to open. The
+    table is per-instance (not per-user): ``/api/catalog`` reads it directly,
+    and ``/api/catalog/{id}/import`` copies a row into the caller's own
+    ``books`` table via the regular :func:`book_save` pipeline.
+
+    Columns mirror the spec SQL verbatim — ``tags`` is stringified JSON
+    (SQLite has no native array type) and ``cover_preset`` is one of the
+    M16.1 gradient-preset names (``c-olive``, ``c-rose``, …) so the UI can
+    render a tile without a real image file. ``source_url`` is informational
+    (Gutenberg attribution); nothing joins on it. No FK because the row
+    references a file-on-disk, not another DB table.
+    """
+    conn.execute("""
+        CREATE TABLE catalog_books (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          author TEXT NOT NULL,
+          language TEXT NOT NULL DEFAULT 'en',
+          level TEXT NOT NULL,
+          pages INTEGER NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          cover_preset TEXT NOT NULL,
+          source_url TEXT,
+          source_path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(title, author)
+        )
+        """)
+    conn.execute("CREATE INDEX idx_catalog_level ON catalog_books(level)")
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
@@ -322,6 +357,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v3_to_v4,
     _migrate_v4_to_v5,
     _migrate_v5_to_v6,
+    _migrate_v6_to_v7,
 ]
 
 
@@ -1233,6 +1269,143 @@ def count_books() -> int:
     conn = get_db()
     row = conn.execute("SELECT COUNT(*) AS n FROM books").fetchone()
     return int(row["n"]) if row else 0
+
+
+# ---------- catalog (M16.5) ----------
+
+
+CATALOG_LEVELS = ("A1", "A2", "B1", "B2", "C1")
+
+
+def catalog_upsert(
+    *,
+    title: str,
+    author: str,
+    level: str,
+    pages: int,
+    tags: list[str],
+    cover_preset: str,
+    source_url: str | None,
+    source_path: str,
+    language: str = "en",
+) -> int:
+    """Insert or leave-alone a ``catalog_books`` row keyed on (title, author).
+
+    Idempotency is enforced by the ``UNIQUE(title, author)`` constraint
+    from the v6→v7 migration. Returns the row id either way so the
+    seed script can log what it touched.
+    """
+    conn = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with conn:
+        conn.execute(
+            "INSERT INTO catalog_books(title, author, language, level, pages, "
+            "tags, cover_preset, source_url, source_path, created_at) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(title, author) DO NOTHING",
+            (
+                title,
+                author,
+                language,
+                level,
+                pages,
+                json.dumps(tags),
+                cover_preset,
+                source_url,
+                source_path,
+                now,
+            ),
+        )
+    row = conn.execute(
+        "SELECT id FROM catalog_books WHERE title = ? AND author = ?",
+        (title, author),
+    ).fetchone()
+    return int(row["id"])
+
+
+def _row_to_catalog_item(row: sqlite3.Row) -> dict:
+    try:
+        tags = json.loads(row["tags"]) if row["tags"] else []
+    except (TypeError, json.JSONDecodeError):
+        tags = []
+    return {
+        "id": int(row["id"]),
+        "title": row["title"],
+        "author": row["author"],
+        "level": row["level"],
+        "pages": int(row["pages"]),
+        "tags": tags,
+        "cover_preset": row["cover_preset"],
+    }
+
+
+def catalog_list() -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, title, author, level, pages, tags, cover_preset "
+        "FROM catalog_books ORDER BY level, title"
+    ).fetchall()
+    return [_row_to_catalog_item(r) for r in rows]
+
+
+def catalog_get(catalog_id: int) -> dict | None:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, title, author, language, level, pages, tags, "
+        "cover_preset, source_url, source_path, created_at "
+        "FROM catalog_books WHERE id = ?",
+        (catalog_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    out = _row_to_catalog_item(row)
+    out["language"] = row["language"]
+    out["source_url"] = row["source_url"]
+    out["source_path"] = row["source_path"]
+    return out
+
+
+def catalog_sections(user_level: str = "B1") -> list[dict]:
+    """Group catalog books into UI sections per the M16.5 spec.
+
+    * "По твоему уровню" — ``level`` within ±1 of ``user_level``
+      (e.g. B1 → A2/B1/B2).
+    * "Короткое — за выходные" — anything tagged ``short``.
+    * "Все книги" — everything else.
+
+    A book can appear in multiple sections; the UI dedupes visually.
+    Order inside each section is by ``level`` then ``title``.
+    """
+    if user_level not in CATALOG_LEVELS:
+        user_level = "B1"
+    idx = CATALOG_LEVELS.index(user_level)
+    neighbours = set(CATALOG_LEVELS[max(0, idx - 1) : idx + 2])
+    items = catalog_list()
+
+    by_level = [it for it in items if it["level"] in neighbours]
+    shorts = [it for it in items if "short" in it["tags"]]
+    return [
+        {"key": "По твоему уровню", "items": by_level},
+        {"key": "Короткое — за выходные", "items": shorts},
+        {"key": "Все книги", "items": items},
+    ]
+
+
+def catalog_already_imported(catalog_id: int, *, user_id: int = SEED_USER_ID) -> int | None:
+    """Return the user's ``books.id`` for a previously-imported catalog row, or None.
+
+    Dedup is on (title, author) — the same pair in the user's library is
+    treated as "already imported" even if the book got there via upload.
+    """
+    entry = catalog_get(catalog_id)
+    if entry is None:
+        return None
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM books WHERE user_id = ? AND title = ? AND " "(author IS ? OR author = ?)",
+        (user_id, entry["title"], entry["author"], entry["author"]),
+    ).fetchone()
+    return int(row["id"]) if row else None
 
 
 # ---------- test helpers ----------

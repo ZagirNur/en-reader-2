@@ -288,8 +288,7 @@ def test_mastered_plus_wrong_demotes_to_review() -> None:
         )
     storage.record_training_result("ominous", correct=False)
     row = conn.execute(
-        "SELECT status, correct_streak, wrong_count "
-        "FROM user_dictionary WHERE lemma = 'ominous'"
+        "SELECT status, correct_streak, wrong_count " "FROM user_dictionary WHERE lemma = 'ominous'"
     ).fetchone()
     assert row["status"] == "review"
     assert row["correct_streak"] == 0

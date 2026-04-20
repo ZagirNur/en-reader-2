@@ -57,6 +57,14 @@ const state = {
   dictWords: null,
   dictStats: null,
   dictFilter: "all",
+  // M16.5: catalog screen. `catalog` is the grouped-sections payload
+  // from /api/catalog; `null` means "not fetched", non-null is the
+  // loaded state. `catalogLevel` is the currently-selected level chip
+  // (A1..C1); it defaults to B1 and is client-only for now — no
+  // persistence until user.preferred_level lands.
+  catalog: null,
+  catalogLevel: "B1",
+  catalogImporting: false,
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -167,6 +175,8 @@ function parseRoute(path) {
   if (path === "/login" || path === "/signup") return { view: "login" };
   // M16.4: dictionary screen. Tab bar's "dict" tab routes here.
   if (path === "/dict") return { view: "dictionary" };
+  // M16.5: catalog screen. Tab bar's "cat" tab routes here.
+  if (path === "/cat") return { view: "catalog" };
   const m = BOOK_ROUTE_RE.exec(path);
   if (m) return { view: "reader", bookId: Number(m[1]) };
   return { view: "error" };
@@ -192,6 +202,11 @@ function navigate(path) {
     patch.dictWords = null;
     patch.dictStats = null;
   }
+  // M16.5: leaving the catalog drops its cached sections; level chip
+  // persists across revisits so the user's last pick is remembered.
+  if (state.view === "catalog" && parsed.view !== "catalog") {
+    patch.catalog = null;
+  }
   setState(patch);
 }
 
@@ -210,6 +225,11 @@ function onPopState() {
   if (state.view === "dictionary" && parsed.view !== "dictionary") {
     patch.dictWords = null;
     patch.dictStats = null;
+  }
+  // M16.5: leaving the catalog drops its cached sections; level chip
+  // persists across revisits so the user's last pick is remembered.
+  if (state.view === "catalog" && parsed.view !== "catalog") {
+    patch.catalog = null;
   }
   setState(patch);
 }
@@ -354,12 +374,15 @@ function renderLibrary() {
   showTabBar();
   renderTabBar("lib", (id) => {
     if (id === "lib") return;
-    // M16.4: dictionary tab wired up — other tabs still land in toast-
-    // land until M16.5 / M16.6 ship their screens.
     if (id === "dict") {
       navigate("/dict");
       return;
     }
+    if (id === "cat") {
+      navigate("/cat");
+      return;
+    }
+    // M16.6+ tabs still toast until they ship.
     showToast("Скоро");
   });
 
@@ -1484,6 +1507,10 @@ function renderDictionary() {
       navigate("/");
       return;
     }
+    if (id === "cat") {
+      navigate("/cat");
+      return;
+    }
     showToast("Скоро");
   });
 
@@ -1756,6 +1783,152 @@ function buildWordDetailSheet(word) {
 
   content.appendChild(actions);
   return content;
+}
+
+// ---------- M16.5: catalog screen ----------
+
+const _CATALOG_LEVELS = ["A1", "A2", "B1", "B2", "C1"];
+
+async function _fetchCatalog(level) {
+  try {
+    const payload = await apiGet(
+      `/api/catalog?level=${encodeURIComponent(level)}`,
+    );
+    setState({ catalog: payload.sections || [] });
+  } catch (err) {
+    setState({ view: "error", error: err.message });
+  }
+}
+
+function _catalogLevelChips(activeLevel) {
+  const wrap = document.createElement("div");
+  wrap.className = "catalog-chips";
+  for (const lvl of _CATALOG_LEVELS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (lvl === activeLevel ? " active" : "");
+    chip.textContent = lvl;
+    chip.addEventListener("click", () => {
+      if (state.catalogImporting) return;
+      if (state.catalogLevel === lvl) return;
+      setState({ catalogLevel: lvl, catalog: null });
+      _fetchCatalog(lvl);
+    });
+    wrap.appendChild(chip);
+  }
+  return wrap;
+}
+
+async function _importCatalogBook(item) {
+  if (state.catalogImporting) return;
+  state.catalogImporting = true;
+  try {
+    const resp = await apiPost(`/api/catalog/${item.id}/import`, {});
+    showToast(
+      resp.already_imported ? "Уже в библиотеке" : "Добавлено в библиотеку",
+    );
+    // Give the toast a breath before navigating so the user sees the
+    // confirmation; 500 ms matches the spec's §4 handoff timing.
+    setTimeout(() => {
+      state.catalogImporting = false;
+      navigate(`/books/${resp.book_id}`);
+    }, 500);
+  } catch (err) {
+    state.catalogImporting = false;
+    showToast("Не удалось добавить");
+  }
+}
+
+function _catalogCard(item) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "catalog-card";
+  // Gradient tile — reuses the .cover primitive + preset classes from M16.1.
+  const cover = document.createElement("div");
+  cover.className = `cover ${item.cover_preset || "c-olive"}`;
+  card.appendChild(cover);
+
+  const title = document.createElement("div");
+  title.className = "catalog-card-title";
+  title.textContent = item.title;
+  card.appendChild(title);
+
+  const meta = document.createElement("div");
+  meta.className = "catalog-card-meta";
+  meta.textContent = `${item.level} · ${item.pages} стр.`;
+  card.appendChild(meta);
+
+  card.addEventListener("click", () => _importCatalogBook(item));
+  return card;
+}
+
+function _catalogSection(section) {
+  const wrap = document.createElement("section");
+  wrap.className = "catalog-section";
+  const label = document.createElement("div");
+  label.className = "uplabel";
+  label.textContent = section.key;
+  wrap.appendChild(label);
+
+  const row = document.createElement("div");
+  row.className = "catalog-row";
+  if (!section.items || section.items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "catalog-empty";
+    empty.textContent = "Пока ничего";
+    row.appendChild(empty);
+  } else {
+    for (const item of section.items) {
+      row.appendChild(_catalogCard(item));
+    }
+  }
+  wrap.appendChild(row);
+  return wrap;
+}
+
+function renderCatalog() {
+  const root = document.getElementById("root");
+  showTabBar();
+  renderTabBar("cat", (id) => {
+    if (id === "cat") return;
+    if (id === "lib") {
+      navigate("/");
+      return;
+    }
+    if (id === "dict") {
+      navigate("/dict");
+      return;
+    }
+    showToast("Скоро");
+  });
+
+  if (state.catalog === null) {
+    root.innerHTML = `<div class="loader">Loading…</div>`;
+    _fetchCatalog(state.catalogLevel);
+    return;
+  }
+
+  root.innerHTML = "";
+  const main = document.createElement("main");
+  main.className = "catalog";
+
+  const uplabel = document.createElement("div");
+  uplabel.className = "uplabel";
+  uplabel.textContent = "Каталог";
+  main.appendChild(uplabel);
+
+  const h1 = document.createElement("h1");
+  h1.className = "catalog-h1";
+  h1.textContent = "Что почитать";
+  main.appendChild(h1);
+
+  main.appendChild(_catalogLevelChips(state.catalogLevel));
+
+  for (const section of state.catalog) {
+    main.appendChild(_catalogSection(section));
+  }
+
+  root.appendChild(main);
 }
 
 function renderLoading() {
@@ -2260,6 +2433,7 @@ function render() {
     case "reader": return renderReader();
     case "login": return renderLogin();
     case "dictionary": return renderDictionary();
+    case "catalog": return renderCatalog();
     case "loading": return renderLoading();
     case "error": return renderError();
     default: return renderError();

@@ -686,6 +686,95 @@ def api_set_current_book(
     return Response(status_code=204)
 
 
+# ---------- catalog (M16.5) ----------
+
+
+@app.get("/api/catalog")
+def api_catalog(
+    level: str | None = None,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Return catalog books grouped into UI sections.
+
+    ``level`` tunes the "По твоему уровню" section — no persistence, the
+    frontend just sends whatever chip is selected. Defaults to B1 if the
+    caller sends nothing or a value we don't recognise.
+    """
+    sections = storage.catalog_sections(user_level=level or "B1")
+    return {"sections": sections}
+
+
+@app.post("/api/catalog/{catalog_id}/import")
+def api_catalog_import(
+    catalog_id: int,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Copy a catalog entry into the caller's personal library.
+
+    Reads the source file referenced by the catalog row, runs it through
+    the standard parse → analyze → chunk pipeline via ``storage.book_save``,
+    and returns ``{"book_id": N}`` pointing at the freshly-created row in
+    the caller's own ``books`` table.
+
+    Dedup is on (title, author): if the user already has a book with the
+    same title+author (from a prior import or an unrelated upload), we
+    return the existing book_id with 200 rather than 409 so the UX is
+    "tap → land on the book" regardless of whether this is the first
+    time or not. The response includes ``already_imported=True`` so the
+    client can surface a different toast.
+    """
+    entry = storage.catalog_get(catalog_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="catalog entry not found")
+
+    existing_id = storage.catalog_already_imported(catalog_id, user_id=user.id)
+    if existing_id is not None:
+        return {"book_id": existing_id, "already_imported": True}
+
+    source_path = Path(entry["source_path"])
+    if not source_path.is_absolute():
+        source_path = Path.cwd() / source_path
+    try:
+        data = source_path.read_bytes()
+    except (FileNotFoundError, OSError) as e:
+        logger.error("catalog source missing id=%d path=%s", catalog_id, source_path)
+        raise HTTPException(status_code=500, detail="catalog source unavailable") from e
+
+    try:
+        parsed = parse_book(data, source_path.name)
+    except UnsupportedFormatError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    # Prefer the human-curated title/author from the catalog row over whatever
+    # the plain-text parser sniffed out of the first line.
+    parsed.title = entry["title"]
+    parsed.author = entry["author"]
+
+    try:
+        book_id = storage.book_save(parsed, user_id=user.id)
+    except Exception:
+        logger.exception("catalog import failed id=%d", catalog_id)
+        raise HTTPException(status_code=500, detail="failed to import")
+    return {"book_id": book_id, "already_imported": False}
+
+
+@app.get("/api/catalog/{catalog_id}/cover")
+def api_catalog_cover(
+    catalog_id: int,
+    user: User = Depends(get_current_user),  # noqa: ARG001
+) -> dict:
+    """Return the preset gradient class name for a catalog entry.
+
+    No real cover files are stored for catalog books in this milestone —
+    the frontend draws a gradient tile using the preset. Returned as JSON
+    rather than a file response so the client can reuse the data from
+    the list endpoint without a second round-trip.
+    """
+    entry = storage.catalog_get(catalog_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="catalog entry not found")
+    return {"cover_preset": entry["cover_preset"]}
+
+
 # ---------- auth routes (M11.2) ----------
 
 
