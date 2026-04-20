@@ -3423,22 +3423,52 @@ function _telegramHandshake() {
   return wa;
 }
 
+// M18.2: fire-and-forget breadcrumbs so we can reconstruct what the
+// Telegram WebView saw from server-side journalctl. Mobile WebView has
+// no accessible DevTools; this is the only way to diagnose a silent
+// auto-login failure in production.
+function _tgDiag(event, detail) {
+  try {
+    fetch("/tg/diag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, detail: String(detail || "").slice(0, 500) }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (_e) {}
+}
+
 // M18.1: if we're opened inside Telegram and have valid initData, trade
 // it for a session cookie before the regular /auth/me probe fires. Any
 // failure (missing initData, 401 from the backend) falls through to the
 // normal flow — a user who opens the domain in a browser still lands on
 // the login/signup screen.
 async function _telegramAutoLogin() {
+  const hasNs = !!window.Telegram;
   const wa = _telegramHandshake();
-  if (!wa || !wa.initData) return false;
+  if (!wa) {
+    _tgDiag("sdk_missing", "hasNs=" + hasNs + " ua=" + navigator.userAgent.slice(0, 60));
+    return false;
+  }
+  const initLen = (wa.initData || "").length;
+  const platform = wa.platform || "?";
+  const version = wa.version || "?";
+  if (!wa.initData) {
+    _tgDiag("init_empty", "platform=" + platform + " version=" + version);
+    return false;
+  }
+  _tgDiag("init_start", "len=" + initLen + " platform=" + platform + " version=" + version);
   try {
     const res = await fetch("/auth/telegram", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ init_data: wa.initData }),
+      credentials: "include",
     });
+    _tgDiag("init_done", "status=" + res.status);
     return res.ok;
-  } catch (_e) {
+  } catch (e) {
+    _tgDiag("init_throw", String(e).slice(0, 200));
     return false;
   }
 }

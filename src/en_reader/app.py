@@ -922,19 +922,61 @@ def auth_telegram(p: TelegramAuthIn, request: Request) -> dict:
     ``user_upsert_telegram``, and stamp the session cookie the rest of
     the /api/* routes already honour. 401 on any verification failure
     — no leak about which step failed.
+
+    M18.2: verbose logs on every branch so production issues (client
+    sending empty initData, HMAC drift, etc.) are debuggable from
+    ``journalctl -u en-reader``. Only the length + last 6 chars of the
+    hash are logged — the user payload and full signature stay private.
     """
+    ip = _client_ip(request)
+    ua = request.headers.get("user-agent", "")[:80]
+    origin = request.headers.get("origin", "")
+    init_len = len(p.init_data or "")
+    init_tail = (p.init_data or "")[-12:]
+    logger.info(
+        "auth/telegram: ip=%s ua=%r origin=%r init_len=%d init_tail=%r",
+        ip, ua, origin, init_len, init_tail,
+    )
     if not _TELEGRAM_BOT_TOKEN:
+        logger.warning("auth/telegram: 503 — TELEGRAM_BOT_TOKEN not configured")
         raise HTTPException(status_code=503, detail="telegram disabled")
-    if not auth_ratelimit.check(_client_ip(request)):
+    if not auth_ratelimit.check(ip):
+        logger.warning("auth/telegram: 429 — rate-limited ip=%s", ip)
         raise HTTPException(status_code=429, detail="too many attempts")
     try:
         tg_user = tg.verify_init_data(p.init_data, _TELEGRAM_BOT_TOKEN)
-    except tg.InvalidInitDataError:
+    except tg.InvalidInitDataError as e:
+        logger.warning("auth/telegram: 401 — verify failed: %s", e)
         raise HTTPException(status_code=401, detail="invalid telegram init")
     user = storage.user_upsert_telegram(tg_user.id, display_name=tg_user.first_name)
     request.session["user_id"] = user.id
-    logger.info("telegram login: tg_id=%d user_id=%d", tg_user.id, user.id)
+    logger.info(
+        "auth/telegram: 200 — tg_id=%d user_id=%d username=%r",
+        tg_user.id, user.id, tg_user.username,
+    )
     return {"email": user.email, "telegram_id": tg_user.id}
+
+
+class TelegramDiagIn(BaseModel):
+    event: str = Field(min_length=1, max_length=64)
+    detail: str = Field(default="", max_length=512)
+
+
+@app.post("/tg/diag")
+def tg_diag(p: TelegramDiagIn, request: Request) -> dict:
+    """Client-side breadcrumb from the Mini App into our server log.
+
+    M18.2: the Telegram WebView doesn't expose DevTools on mobile, so
+    when the auto-login flow fails silently we have no way to see what
+    the client saw. This endpoint is a write-only log drain — the
+    frontend POSTs short tags ("sdk_missing", "init_empty", etc.) and
+    we land them in journalctl alongside the /auth/telegram attempts.
+    No auth gate: the worst a malicious client can do is spam our log.
+    """
+    ip = _client_ip(request)
+    ua = request.headers.get("user-agent", "")[:80]
+    logger.info("tg/diag: ip=%s event=%r detail=%r ua=%r", ip, p.event, p.detail, ua)
+    return {"ok": True}
 
 
 @app.post("/tg/webhook")
