@@ -189,18 +189,34 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
+# M17.8: Cloudflare (or any reverse proxy we trust) talks to the origin
+# over plain HTTP, so ``request.base_url`` resolves to ``http://<ip>/``
+# even though the browser's visible URL is ``https://enreader.zagirnur.dev/``.
+# Without an explicit allow-list, every in-browser POST gets a 403 from
+# the Origin check because ``https://enreader.zagirnur.dev`` does not
+# start with ``http://138.201.153.242``. Configure the public URL(s)
+# via ``ALLOWED_ORIGINS`` (comma-separated, no trailing slash).
+_ALLOWED_ORIGINS = tuple(
+    o.strip().rstrip("/")
+    for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+)
+
+
 class OriginCheckMiddleware(BaseHTTPMiddleware):
     """Cheap CSRF guard on top of ``SameSite=Lax`` session cookies.
 
     For any non-safe method (POST/PUT/PATCH/DELETE) we look at
-    ``Origin`` first, then ``Referer``. If either is present and does
-    **not** start with the request's own ``base_url``, we reject 403 with
-    a JSON body. If neither header is present we allow the request
-    through — a handful of legitimate clients (``navigator.sendBeacon``
-    in some browsers, server-to-server curl) omit both, and blocking
-    them would be more user-visible breakage than the attack surface it
-    closes. The session cookie's ``SameSite=Lax`` flag still protects
-    against the classic cross-site form-post case.
+    ``Origin`` first, then ``Referer``. The header must match either
+    the request's own ``base_url`` (same-origin / no proxy) OR one of
+    the ``ALLOWED_ORIGINS`` env-configured prefixes (trusted public
+    hostnames behind a reverse proxy). If neither header is present we
+    allow the request through — a handful of legitimate clients
+    (``navigator.sendBeacon`` in some browsers, server-to-server curl)
+    omit both, and blocking them would be more user-visible breakage
+    than the attack surface it closes. The session cookie's
+    ``SameSite=Lax`` flag still protects against the classic cross-site
+    form-post case.
     """
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
@@ -208,7 +224,9 @@ class OriginCheckMiddleware(BaseHTTPMiddleware):
             origin = request.headers.get("origin") or request.headers.get("referer", "")
             if origin:
                 expected = str(request.base_url).rstrip("/")
-                if not origin.startswith(expected):
+                if not origin.startswith(expected) and not any(
+                    origin.startswith(a) for a in _ALLOWED_ORIGINS
+                ):
                     return JSONResponse(
                         {"detail": "forbidden origin"},
                         status_code=403,
