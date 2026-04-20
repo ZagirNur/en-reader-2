@@ -525,6 +525,168 @@ body.with-tabbar #root { padding-bottom: 82px; }
   font-size: 12px;
 }
 
+/* --- M16.6: training screens (home + card + done). --------------------- */
+.learn-home { max-width: 720px; margin: 0 auto; padding: 18px 22px 96px; }
+.learn-h1 {
+  font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+  color: var(--ink); margin: 2px 0 18px;
+}
+.daily-goal {
+  background: var(--soft); border-radius: 16px; padding: 18px;
+  margin-bottom: 22px;
+}
+.daily-goal-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.daily-goal-icon {
+  width: 32px; height: 32px; border-radius: 10px;
+  background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.daily-goal-icon svg { width: 18px; height: 18px; }
+.daily-goal-title { font-size: 14px; font-weight: 600; color: var(--ink); }
+.daily-goal-sub {
+  font-size: 11px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.learn-modes-label { margin-bottom: 10px; }
+
+.mode-card {
+  width: 100%;
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px; margin-bottom: 10px;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 14px;
+  cursor: pointer; font-family: inherit; text-align: left;
+  transition: transform 120ms, border 0.15s;
+}
+.mode-card:hover { transform: translateY(-1px); border-color: color-mix(in oklab, var(--ink) 15%, var(--line)); }
+.mode-card-emoji {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: var(--soft);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px; flex: 0 0 auto;
+}
+.mode-card-text { flex: 1; min-width: 0; }
+.mode-card-title { font-size: 15px; font-weight: 600; color: var(--ink); }
+.mode-card-desc { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.mode-card-chev { color: var(--ink-2); display: inline-flex; align-items: center; }
+.mode-card-chev svg { width: 16px; height: 16px; }
+
+/* Learn card screen (MC session). */
+.learn-card-screen { max-width: 560px; margin: 0 auto; padding: 14px 22px 40px; }
+.learn-empty {
+  min-height: 60vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px;
+  text-align: center;
+}
+.learn-empty-msg { font-size: 15px; color: var(--ink-2); }
+.learn-empty .btn { max-width: 240px; }
+
+.learn-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.learn-back { padding: 6px 10px; }
+.learn-back svg { width: 18px; height: 18px; }
+.learn-counter {
+  font-size: 12px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.learn-header-spacer { width: 34px; height: 34px; }
+
+.segments { display: flex; gap: 4px; margin-bottom: 20px; }
+.segments > div {
+  flex: 1; height: 3px; border-radius: 2px;
+  background: var(--line);
+}
+.segments > div.past { background: var(--accent); }
+.segments > div.current { background: var(--ink); }
+
+.learn-card {
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 20px; padding: 30px 20px 24px;
+  min-height: 260px;
+}
+.learn-card-prompt { text-align: center; }
+.learn-card-head {
+  margin-top: 16px; text-align: center;
+  font-size: 42px; line-height: 1; letter-spacing: -0.02em;
+  font-weight: 600; color: var(--ink);
+}
+.learn-card-ex {
+  margin-top: 22px; padding: 14px 16px; border-radius: 12px;
+  background: var(--soft);
+  font-size: 14px; line-height: 1.55; text-align: center;
+  color: var(--ink);
+}
+.learn-card-src {
+  margin-top: 8px; text-align: center;
+  font-size: 10px; color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+
+.mc-grid {
+  margin-top: 18px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.mc-option {
+  padding: 16px 14px; border-radius: 14px;
+  font-size: 15px; font-weight: 500; text-align: left;
+  background: var(--card); color: var(--ink);
+  border: 1.5px solid var(--line);
+  cursor: pointer; font-family: inherit;
+  transition: background 0.2s, border-color 0.2s;
+}
+.mc-option:disabled { cursor: default; }
+.mc-option.right {
+  background: color-mix(in oklab, #6b8a4a 25%, var(--card));
+  border-color: #6b8a4a;
+  color: var(--ink);
+}
+.mc-option.wrong {
+  background: color-mix(in oklab, var(--accent) 18%, var(--card));
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.learn-footer {
+  margin-top: 18px;
+  display: flex; justify-content: space-between;
+  font-size: 12px; color: var(--ink-2);
+}
+.learn-skip { cursor: pointer; }
+.learn-skip:hover { color: var(--ink); }
+
+/* Done screen. */
+.learn-done {
+  text-align: center; padding: 40px 20px 20px;
+}
+.learn-done-emoji { font-size: 56px; margin-bottom: 14px; }
+.learn-done-h1 {
+  margin: 0; font-size: 28px; font-weight: 600;
+  letter-spacing: -0.02em; color: var(--ink);
+}
+.learn-done-sub {
+  margin-top: 10px; font-size: 14px; color: var(--ink-2);
+}
+.learn-done-streak {
+  margin-top: 26px; padding: 16px; text-align: left;
+  background: var(--soft); border-radius: 16px;
+}
+.learn-done-streak-label {
+  font-size: 12px; color: var(--ink-2); margin-bottom: 4px;
+}
+.learn-done-streak-val {
+  font-size: 20px; font-weight: 600; color: var(--ink);
+}
+.learn-done-xp {
+  font-size: 11px; color: var(--ink-2); margin-top: 4px;
+}
+.learn-done-back { margin-top: 20px; }
+
 /* --- M16.1: accessibility — honor the user's reduced-motion preference. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

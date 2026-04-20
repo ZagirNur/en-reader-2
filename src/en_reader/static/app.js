@@ -65,6 +65,14 @@ const state = {
   catalog: null,
   catalogLevel: "B1",
   catalogImporting: false,
+  // M16.6: training session. `state.learn` is null outside the
+  // learnCard flow; once the session starts it carries
+  // {pool, idx, correct, feedback, pickedWrong, done}. `state.learn`
+  // is ephemeral — never persisted. `state.learnStats` is a
+  // placeholder for the daily-goal counter (M16.8 will wire the real
+  // value); rendering falls back to 0 when null.
+  learn: null,
+  learnStats: null,
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -177,6 +185,10 @@ function parseRoute(path) {
   if (path === "/dict") return { view: "dictionary" };
   // M16.5: catalog screen. Tab bar's "cat" tab routes here.
   if (path === "/cat") return { view: "catalog" };
+  // M16.6: training screens. `/learn` is the home (mode picker);
+  // `/learn/card` is the multiple-choice session.
+  if (path === "/learn") return { view: "learnHome" };
+  if (path === "/learn/card") return { view: "learnCard" };
   const m = BOOK_ROUTE_RE.exec(path);
   if (m) return { view: "reader", bookId: Number(m[1]) };
   return { view: "error" };
@@ -207,6 +219,17 @@ function navigate(path) {
   if (state.view === "catalog" && parsed.view !== "catalog") {
     patch.catalog = null;
   }
+  // M16.6: leaving any learn screen drops the session state so a
+  // revisit always starts fresh. Results are persisted server-side
+  // after each answer, not in `state.learn`.
+  const leavingLearn =
+    (state.view === "learnHome" || state.view === "learnCard") &&
+    parsed.view !== "learnHome" &&
+    parsed.view !== "learnCard";
+  if (leavingLearn) {
+    patch.learn = null;
+    patch.learnStats = null;
+  }
   setState(patch);
 }
 
@@ -230,6 +253,16 @@ function onPopState() {
   // persists across revisits so the user's last pick is remembered.
   if (state.view === "catalog" && parsed.view !== "catalog") {
     patch.catalog = null;
+  }
+  // M16.6: leaving any learn screen drops the session state so a
+  // revisit always starts fresh.
+  const leavingLearn =
+    (state.view === "learnHome" || state.view === "learnCard") &&
+    parsed.view !== "learnHome" &&
+    parsed.view !== "learnCard";
+  if (leavingLearn) {
+    patch.learn = null;
+    patch.learnStats = null;
   }
   setState(patch);
 }
@@ -382,7 +415,11 @@ function renderLibrary() {
       navigate("/cat");
       return;
     }
-    // M16.6+ tabs still toast until they ship.
+    if (id === "learn") {
+      navigate("/learn");
+      return;
+    }
+    // No more "Скоро" tabs — every id above routes to a real screen.
     showToast("Скоро");
   });
 
@@ -1511,6 +1548,10 @@ function renderDictionary() {
       navigate("/cat");
       return;
     }
+    if (id === "learn") {
+      navigate("/learn");
+      return;
+    }
     showToast("Скоро");
   });
 
@@ -1899,6 +1940,10 @@ function renderCatalog() {
       navigate("/dict");
       return;
     }
+    if (id === "learn") {
+      navigate("/learn");
+      return;
+    }
     showToast("Скоро");
   });
 
@@ -1927,6 +1972,487 @@ function renderCatalog() {
   for (const section of state.catalog) {
     main.appendChild(_catalogSection(section));
   }
+
+  root.appendChild(main);
+}
+
+// --- M16.6: training (multiple choice) ---------------------------------
+// `/learn` is the home (mode picker) + daily-goal placeholder.
+// `/learn/card` is the 4-option MC session. `state.learn` carries the
+// whole session shape — see the comment on `state.learn` in the
+// top-level state block for fields. The backend (M16.3) owns the
+// progression state-machine; the frontend only POSTs per-answer
+// results.
+
+// Fallback distractors — used when the user's dictionary has fewer
+// than 3 other words to draw from. Matches the prototype's list so a
+// refresh on a sparse account still shows believable options.
+const _LEARN_FALLBACK_DISTRACTORS = [
+  "внушительный",
+  "странный",
+  "тёплый",
+  "острый",
+  "лёгкий",
+  "прилежный",
+  "хрупкий",
+];
+
+// Deterministic seeded shuffle. Given the same seed string and input
+// array, always returns the same permutation — so a refresh of a
+// learn card keeps the option order stable (seed = current lemma).
+// Uses a tiny Mulberry32-style PRNG; good enough for 4-item arrays.
+function _seededShuffle(arr, seed) {
+  const out = arr.slice();
+  let h = 2166136261 >>> 0;
+  const s = String(seed || "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  function rand() {
+    h = (h + 0x6d2b79f5) >>> 0;
+    let t = h;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+// Build the 4 MC options for the current word:
+// - correct translation (always present)
+// - up to 3 distractor translations from other pool words
+// - padded with _LEARN_FALLBACK_DISTRACTORS if the pool is too small
+// Dedupes against the correct answer so we never show it twice. The
+// final order is a deterministic shuffle seeded by the lemma.
+function buildOptions(currentWord, pool) {
+  const correct = currentWord.translation;
+  const seen = new Set([correct]);
+  const distractors = [];
+  for (const w of pool) {
+    if (w.lemma === currentWord.lemma) continue;
+    const t = w.translation;
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    distractors.push(t);
+  }
+  for (const t of _LEARN_FALLBACK_DISTRACTORS) {
+    if (distractors.length >= 3) break;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    distractors.push(t);
+  }
+  const picks = [correct, ...distractors.slice(0, 3)];
+  return _seededShuffle(picks, currentWord.lemma);
+}
+
+async function _fetchLearnPool() {
+  try {
+    const pool = await apiGet("/api/dictionary/training?limit=10");
+    // Ignore the response if the user already navigated away.
+    if (state.view !== "learnCard") return;
+    setState({
+      learn: {
+        pool: Array.isArray(pool) ? pool : [],
+        idx: 0,
+        correct: 0,
+        feedback: null,
+        pickedWrong: null,
+        done: false,
+      },
+    });
+  } catch (err) {
+    setState({ view: "error", error: err.message });
+  }
+}
+
+function _advanceLearn() {
+  // Guard: the user might have navigated away during the feedback
+  // pause; re-check before touching state.learn.
+  if (state.view !== "learnCard" || !state.learn) return;
+  const total = state.learn.pool.length;
+  const nextIdx = state.learn.idx + 1;
+  const done = nextIdx >= total;
+  state.learn.idx = nextIdx;
+  state.learn.feedback = null;
+  state.learn.pickedWrong = null;
+  state.learn.done = done;
+  render();
+}
+
+async function _postTrainingResult(lemma, correct) {
+  try {
+    await apiPost("/api/dictionary/training/result", { lemma, correct });
+  } catch (_e) {
+    // Swallow: the UI has already advanced; a transient failure here
+    // shouldn't derail the session. The server is the source of truth,
+    // so a missed POST just means one answer isn't scored. (M16.9 may
+    // add a retry queue.)
+  }
+}
+
+function renderLearnHome() {
+  const root = document.getElementById("root");
+  showTabBar();
+  renderTabBar("learn", (id) => {
+    if (id === "learn") return;
+    if (id === "lib") {
+      navigate("/");
+      return;
+    }
+    if (id === "dict") {
+      navigate("/dict");
+      return;
+    }
+    if (id === "cat") {
+      navigate("/cat");
+      return;
+    }
+    showToast("Скоро");
+  });
+
+  root.innerHTML = "";
+  const main = document.createElement("main");
+  main.className = "learn-home";
+
+  const uplabel = document.createElement("div");
+  uplabel.className = "uplabel";
+  uplabel.textContent = "Тренировка";
+  main.appendChild(uplabel);
+
+  const h1 = document.createElement("h1");
+  h1.className = "learn-h1";
+  h1.textContent = "Что учим сегодня";
+  main.appendChild(h1);
+
+  // Daily-goal card — placeholder until M16.8 wires the real streak +
+  // count. We derive `done` from `state.learnStats.done` if present and
+  // fall back to 0, so the card renders identically on a cold load.
+  const doneToday =
+    state.learnStats && typeof state.learnStats.done === "number"
+      ? state.learnStats.done
+      : 0;
+  const goalTotal = 10;
+  const pct = Math.max(0, Math.min(100, Math.round((doneToday / goalTotal) * 100)));
+
+  const goal = document.createElement("div");
+  goal.className = "daily-goal";
+  const goalRow = document.createElement("div");
+  goalRow.className = "daily-goal-row";
+  const fireBox = document.createElement("div");
+  fireBox.className = "daily-goal-icon";
+  // Fire SVG is trusted static markup → innerHTML is safe here.
+  fireBox.innerHTML = _ICONS.fire;
+  goalRow.appendChild(fireBox);
+
+  const goalText = document.createElement("div");
+  const goalTitle = document.createElement("div");
+  goalTitle.className = "daily-goal-title";
+  goalTitle.textContent = `Цель дня: ${goalTotal} слов`;
+  const goalSub = document.createElement("div");
+  goalSub.className = "daily-goal-sub";
+  goalSub.textContent = `${doneToday} / ${goalTotal} сделано`;
+  goalText.appendChild(goalTitle);
+  goalText.appendChild(goalSub);
+  goalRow.appendChild(goalText);
+  goal.appendChild(goalRow);
+
+  const pbar = document.createElement("div");
+  pbar.className = "pbar";
+  const pfill = document.createElement("i");
+  pfill.style.width = `${pct}%`;
+  pbar.appendChild(pfill);
+  goal.appendChild(pbar);
+  main.appendChild(goal);
+
+  const modesLabel = document.createElement("div");
+  modesLabel.className = "uplabel learn-modes-label";
+  modesLabel.textContent = "Режимы";
+  main.appendChild(modesLabel);
+
+  // Two mode cards. "Выбор перевода" routes into the MC session;
+  // "Карточки" toasts "Скоро" until M16.7 ships.
+  const modes = [
+    {
+      id: "mc",
+      emoji: "⚡",
+      title: "Выбор перевода",
+      desc: "4 варианта · быстро и бодро",
+      onClick: () => navigate("/learn/card"),
+    },
+    {
+      id: "fl",
+      emoji: "🧠",
+      title: "Карточки",
+      desc: "Интервальные повторения",
+      onClick: () => showToast("Скоро"),
+    },
+  ];
+  for (const m of modes) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "mode-card";
+    card.dataset.modeId = m.id;
+
+    const emoji = document.createElement("div");
+    emoji.className = "mode-card-emoji";
+    emoji.textContent = m.emoji;
+    card.appendChild(emoji);
+
+    const txt = document.createElement("div");
+    txt.className = "mode-card-text";
+    const t = document.createElement("div");
+    t.className = "mode-card-title";
+    t.textContent = m.title;
+    const d = document.createElement("div");
+    d.className = "mode-card-desc";
+    d.textContent = m.desc;
+    txt.appendChild(t);
+    txt.appendChild(d);
+    card.appendChild(txt);
+
+    const chev = document.createElement("span");
+    chev.className = "mode-card-chev";
+    chev.innerHTML = _ICONS.chevR;
+    card.appendChild(chev);
+
+    card.addEventListener("click", m.onClick);
+    main.appendChild(card);
+  }
+
+  root.appendChild(main);
+}
+
+function renderLearnCard() {
+  const root = document.getElementById("root");
+  // MC session hides the tab bar to match the reader's focus mode.
+  hideTabBar();
+
+  if (state.learn === null) {
+    root.innerHTML = `<div class="loader">Loading…</div>`;
+    _fetchLearnPool();
+    return;
+  }
+
+  const pool = state.learn.pool;
+  root.innerHTML = "";
+  const main = document.createElement("main");
+  main.className = "learn-card-screen";
+
+  // Empty-pool branch — no words to train, give the user a way back.
+  if (pool.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "learn-empty";
+    const msg = document.createElement("div");
+    msg.className = "learn-empty-msg";
+    msg.textContent = "Нечего учить, возвращайся позже";
+    empty.appendChild(msg);
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "btn primary full";
+    back.textContent = "Вернуться";
+    back.addEventListener("click", () => navigate("/learn"));
+    empty.appendChild(back);
+    main.appendChild(empty);
+    root.appendChild(main);
+    return;
+  }
+
+  const total = pool.length;
+
+  // Done screen — rendered once idx crosses total (or done flag flips).
+  if (state.learn.done || state.learn.idx >= total) {
+    const done = document.createElement("div");
+    done.className = "learn-done";
+    const emoji = document.createElement("div");
+    emoji.className = "learn-done-emoji";
+    emoji.textContent = "✨";
+    done.appendChild(emoji);
+    const h1 = document.createElement("h1");
+    h1.className = "learn-done-h1";
+    h1.textContent = "Готово!";
+    done.appendChild(h1);
+    const sub = document.createElement("div");
+    sub.className = "learn-done-sub";
+    sub.textContent = `${state.learn.correct} из ${total} верно`;
+    done.appendChild(sub);
+
+    // Streak card — placeholder values until M16.8 wires the real data.
+    const streak = document.createElement("div");
+    streak.className = "learn-done-streak";
+    const streakLabel = document.createElement("div");
+    streakLabel.className = "learn-done-streak-label";
+    streakLabel.textContent = "Серия";
+    streak.appendChild(streakLabel);
+    const streakVal = document.createElement("div");
+    streakVal.className = "learn-done-streak-val";
+    streakVal.textContent = "— дней подряд";
+    streak.appendChild(streakVal);
+    const xp = document.createElement("div");
+    xp.className = "learn-done-xp";
+    xp.textContent = `+${state.learn.correct * 10} XP`;
+    streak.appendChild(xp);
+    done.appendChild(streak);
+
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "btn primary full learn-done-back";
+    backBtn.textContent = "Вернуться";
+    backBtn.addEventListener("click", () => navigate("/learn"));
+    done.appendChild(backBtn);
+
+    main.appendChild(done);
+    root.appendChild(main);
+    return;
+  }
+
+  const current = pool[state.learn.idx];
+
+  // Header row — back btn + "n / total" + spacer for symmetry.
+  const header = document.createElement("div");
+  header.className = "learn-header";
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "btn ghost sm learn-back";
+  back.innerHTML = _ICONS.chevL;
+  back.addEventListener("click", () => navigate("/learn"));
+  header.appendChild(back);
+  const counter = document.createElement("div");
+  counter.className = "learn-counter";
+  counter.textContent = `${state.learn.idx + 1} / ${total}`;
+  header.appendChild(counter);
+  const spacer = document.createElement("div");
+  spacer.className = "learn-header-spacer";
+  header.appendChild(spacer);
+  main.appendChild(header);
+
+  // Segmented progress bar.
+  const segs = document.createElement("div");
+  segs.className = "segments";
+  for (let i = 0; i < total; i++) {
+    const seg = document.createElement("div");
+    if (i < state.learn.idx) seg.classList.add("past");
+    else if (i === state.learn.idx) seg.classList.add("current");
+    segs.appendChild(seg);
+  }
+  main.appendChild(segs);
+
+  // Flashcard — headword + example with bolded lemma + source.
+  const card = document.createElement("div");
+  card.className = "learn-card";
+  const prompt = document.createElement("div");
+  prompt.className = "uplabel learn-card-prompt";
+  prompt.textContent = "Какой перевод?";
+  card.appendChild(prompt);
+
+  const head = document.createElement("div");
+  head.className = "learn-card-head";
+  head.textContent = current.lemma;
+  card.appendChild(head);
+
+  if (current.example) {
+    const ex = document.createElement("div");
+    ex.className = "learn-card-ex";
+    const text = String(current.example);
+    const lemma = current.lemma || "";
+    const lower = text.toLowerCase();
+    const pos = lemma ? lower.indexOf(lemma.toLowerCase()) : -1;
+    ex.appendChild(document.createTextNode('"'));
+    if (pos >= 0 && lemma) {
+      ex.appendChild(document.createTextNode(text.slice(0, pos)));
+      const b = document.createElement("b");
+      b.setAttribute("style", "color:var(--accent)");
+      b.textContent = text.slice(pos, pos + lemma.length);
+      ex.appendChild(b);
+      ex.appendChild(document.createTextNode(text.slice(pos + lemma.length)));
+    } else {
+      ex.appendChild(document.createTextNode(text));
+    }
+    ex.appendChild(document.createTextNode('"'));
+    card.appendChild(ex);
+  }
+
+  // Source line — book title or a dash when the word predates M16.3.
+  const src = document.createElement("div");
+  src.className = "learn-card-src";
+  if (current.source_book && current.source_book.title) {
+    src.textContent = current.source_book.title;
+  } else if (current.source_book_id != null) {
+    src.textContent = `Книга #${current.source_book_id}`;
+  } else {
+    src.textContent = "—";
+  }
+  card.appendChild(src);
+  main.appendChild(card);
+
+  // 2×2 MC grid.
+  const grid = document.createElement("div");
+  grid.className = "mc-grid";
+  const options = buildOptions(current, pool);
+  for (const opt of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mc-option";
+    btn.textContent = opt;
+    const isRight = opt === current.translation;
+    if (state.learn.feedback) {
+      if (isRight) btn.classList.add("right");
+      else if (
+        state.learn.feedback === "wrong" &&
+        opt === state.learn.pickedWrong
+      ) {
+        btn.classList.add("wrong");
+      }
+      btn.disabled = true;
+    }
+    btn.addEventListener("click", () => {
+      // Double-tap guard — once feedback is set the buttons are frozen
+      // until the setTimeout-driven `advance` fires.
+      if (!state.learn || state.learn.feedback !== null) return;
+      if (isRight) {
+        state.learn.feedback = "ok";
+        state.learn.correct += 1;
+        render();
+        _postTrainingResult(current.lemma, true);
+        setTimeout(_advanceLearn, 700);
+      } else {
+        state.learn.feedback = "wrong";
+        state.learn.pickedWrong = opt;
+        render();
+        _postTrainingResult(current.lemma, false);
+        setTimeout(_advanceLearn, 1200);
+      }
+    });
+    grid.appendChild(btn);
+  }
+  main.appendChild(grid);
+
+  // Footer — skip link + status text.
+  const footer = document.createElement("div");
+  footer.className = "learn-footer";
+  const skip = document.createElement("span");
+  skip.className = "learn-skip";
+  skip.textContent = "Пропустить";
+  skip.addEventListener("click", () => {
+    if (!state.learn || state.learn.feedback !== null) return;
+    _advanceLearn();
+  });
+  footer.appendChild(skip);
+
+  const status = document.createElement("span");
+  status.className = "learn-status";
+  if (state.learn.feedback === "ok") status.textContent = "✓ верно";
+  else if (state.learn.feedback === "wrong")
+    status.textContent = "правильный вариант подсвечен";
+  else status.textContent = "нажми любой вариант";
+  footer.appendChild(status);
+  main.appendChild(footer);
 
   root.appendChild(main);
 }
@@ -2434,6 +2960,8 @@ function render() {
     case "login": return renderLogin();
     case "dictionary": return renderDictionary();
     case "catalog": return renderCatalog();
+    case "learnHome": return renderLearnHome();
+    case "learnCard": return renderLearnCard();
     case "loading": return renderLoading();
     case "error": return renderError();
     default: return renderError();
