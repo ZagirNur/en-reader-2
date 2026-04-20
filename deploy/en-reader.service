@@ -1,0 +1,27 @@
+[Unit]
+Description=en-reader web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=enreader
+Group=enreader
+WorkingDirectory=/opt/en-reader
+EnvironmentFile=/opt/en-reader/.env
+ExecStart=/opt/en-reader/.venv/bin/uvicorn en_reader.app:app --host 0.0.0.0 --port 80 --workers 1
+Restart=on-failure
+RestartSec=3
+
+# Bind :80 without running as root. Requires systemd >= 229.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Hardening.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
