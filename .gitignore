@@ -1,0 +1,44 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/*
+!data/.gitkeep
+!data/stop_words.txt
+!data/mwe.txt
+!data/phrasal_verbs.txt
+# M16.5: bundled public-domain catalog fixtures used by scripts/seed_catalog.py.
+!data/catalog/
+!data/catalog/sources/
+!data/catalog/sources/*.txt
+
+# SQLite databases (M6.1) — covered by data/* above but listed explicitly
+# so future DB paths outside data/ are still ignored.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Persistent SECRET_KEY (M11.2) — generated once on first start, must
+# never enter source control. File is chmod 0o600.
+data/.secret_key
+
+# Build / packaging artifacts
+*.egg-info/
+build/
+dist/
+
+# Generated demo fixture (built by the retired scripts/build_demo.py; kept
+# listed so a stale checkout with the artefact ignores it).
+src/en_reader/static/demo.json
+
+# Book covers land with the real parsers in M12; ignore the directory now so
+# future seeds don't leak files into the working tree.
+data/covers/
+
+# pytest-cov (M15.1) drops .coverage in CWD on every run.
+.coverage
+.coverage.*
+htmlcov/

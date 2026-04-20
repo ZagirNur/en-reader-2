@@ -1,0 +1,11 @@
+[Unit]
+Description=en-reader autopull timer (M13.2)
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=10
+Unit=en-reader-autopull.service
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

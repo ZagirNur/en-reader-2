@@ -1,0 +1,25 @@
+[Unit]
+Description=en-reader web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=enreader
+Group=enreader
+WorkingDirectory=/opt/en-reader
+EnvironmentFile=/opt/en-reader/.env
+# Uvicorn listens only on localhost:8080; Caddy (M13.4) fronts :80/:443
+# and reverse-proxies here. Direct external access is blocked by ufw.
+ExecStart=/opt/en-reader/.venv/bin/uvicorn en_reader.app:app --host 127.0.0.1 --port 8080 --workers 1
+Restart=on-failure
+RestartSec=3
+
+# Hardening.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

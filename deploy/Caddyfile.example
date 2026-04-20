@@ -1,0 +1,16 @@
+# en-reader Caddy config (M13.4).
+#
+# Copy to /etc/caddy/Caddyfile and replace DOMAIN.com with the real
+# hostname. `systemctl reload caddy` after editing — Caddy will grab the
+# Let's Encrypt cert on the next inbound request (HTTP-01 over :80 or
+# TLS-ALPN-01 over :443). No nginx, no manual certbot.
+
+DOMAIN.com {
+  reverse_proxy 127.0.0.1:8080
+  encode gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer-when-downgrade"
+  }
+}

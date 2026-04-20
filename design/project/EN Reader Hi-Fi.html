@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=1600"/>
+<title>EN Reader — Hi-Fi Directions</title>
+<link rel="stylesheet" href="hi-styles.css"/>
+<style>
+  html, body { margin: 0; padding: 0; background: #eae3d3; font-family: 'Geist', system-ui, sans-serif; color: #2a1f14; }
+  .canvas { padding: 56px 48px 96px; max-width: 1720px; margin: 0 auto; }
+  .canvas-head { max-width: 900px; margin-bottom: 48px; }
+  .canvas-head h1 { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: 56px; line-height: 1; letter-spacing: -0.02em; margin: 0 0 14px; }
+  .canvas-head p { margin: 0; color: #6b5a44; font-size: 16px; line-height: 1.5; max-width: 640px; }
+  .canvas-head .meta { display: inline-flex; gap: 10px; margin-bottom: 20px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #8a7858; }
+  .canvas-head .meta b { color: #b8442d; font-weight: 600; }
+
+  .dir-section { margin-top: 80px; }
+  .dir-section:first-of-type { margin-top: 32px; }
+  .dir-header { display: flex; align-items: baseline; gap: 20px; margin-bottom: 8px; }
+  .dir-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    background: #2a1f14; color: #f7f1e3;
+  }
+  .dir-header h2 { margin: 0; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: 38px; letter-spacing: -0.01em; }
+  .dir-desc { margin: 4px 0 32px; color: #6b5a44; font-size: 14px; max-width: 720px; line-height: 1.55; }
+  .dir-desc b { color: #2a1f14; font-weight: 600; }
+
+  .row {
+    display: flex; gap: 44px;
+    overflow-x: auto;
+    padding: 36px 12px 48px;
+    scroll-snap-type: x mandatory;
+  }
+  .row::-webkit-scrollbar { height: 10px; }
+  .row::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 10px; }
+
+  .cell { flex-shrink: 0; scroll-snap-align: start; }
+  .cell .cap {
+    margin-top: 18px; padding-left: 4px;
+    font-family: 'Geist', sans-serif; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: #6b5a44;
+  }
+  .cell .cap b { display: block; color: #2a1f14; font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: -0.005em; margin-bottom: 3px; }
+
+  /* per-direction backgrounds */
+  .dir-A { background: #ede5cf; padding: 48px 32px; border-radius: 24px; margin: 0 -32px; }
+  .dir-D { background: #f6f4ef; padding: 48px 32px; border-radius: 24px; margin: 0 -32px; }
+  .dir-D .dir-badge { background: #e85d2c; color: #fff; }
+  .dir-B { background: #15151a; padding: 48px 32px; border-radius: 24px; margin: 0 -32px; color: #ebebef; }
+  .dir-B .dir-header h2 { color: #ebebef; }
+  .dir-B .dir-desc { color: #9a9aa5; }
+  .dir-B .dir-desc b { color: #ebebef; }
+  .dir-B .dir-badge { background: #ff7a45; color: #15151a; }
+  .dir-B .cell .cap { color: #9a9aa5; }
+  .dir-B .cell .cap b { color: #ebebef; }
+  .dir-C { background: #fff5eb; padding: 48px 32px; border-radius: 24px; margin: 0 -32px; }
+  .dir-C .dir-badge { background: #ff7a4f; color: #fff; }
+
+  .footer {
+    margin-top: 80px; padding: 32px;
+    background: #2a1f14; color: #e8dcc0;
+    border-radius: 20px;
+    font-family: 'Geist', sans-serif;
+    max-width: 900px;
+  }
+  .footer h3 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 26px; margin: 0 0 12px; color: #fff; }
+  .footer p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; color: #c9b898; }
+  .footer ul { margin: 8px 0 0; padding-left: 20px; color: #c9b898; font-size: 14px; line-height: 1.6; }
+  .footer a { color: #ff9770; }
+</style>
+</head>
+<body>
+  <div class="canvas">
+    <div class="canvas-head">
+      <div class="meta"><span>Hi-Fi · v1</span><span>·</span><span>3 направления</span><span>·</span><b>iOS · 380 × 760</b></div>
+      <h1>EN Reader — Editorial, светлая + тёмная</h1>
+      <p>Основная тема — <b>Light Editorial</b> (светлая версия того самого Dark Editorial). Ниже — те же пять экранов в ночной тёмной, плюс Warm Paper и Soft Peach в архиве для сравнения.</p>
+    </div>
+
+    <div id="root"></div>
+
+    <div class="footer">
+      <h3>Финал: Editorial в двух режимах</h3>
+      <p><b style="color:#fff">D · Light Editorial</b> — основная тема. Geist sans, оранжевый акцент (#e85d2c), кремовый фон, строгая сетка, чёткий контраст. Дневной режим по умолчанию.</p>
+      <p><b style="color:#fff">B · Dark Editorial</b> — ночная тема. Тот же язык, тот же акцент, но на тёмном фоне. Переключается по системной теме или вручную.</p>
+      <ul>
+        <li>Переключатель темы появится в настройках читалки и на экране «Профиль».</li>
+        <li>Warm Paper и Soft Peach — в архиве, если захотим вернуться к альтернативному тону.</li>
+        <li>Следующий шаг — интерактивный прототип с реальной навигацией между экранами на Light + Dark.</li>
+      </ul>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="hi-primitives.jsx"></script>
+  <script type="text/babel" src="hi-screens.jsx"></script>
+
+  <script type="text/babel">
+    const DIRECTIONS = [
+      { id: 'thD', cls: 'dir-D', badge: 'D',
+        title: 'Light Editorial · основная',
+        desc: 'Светлая версия Dark Editorial — тот же язык: Geist sans, оранжевый акцент, строгая сетка, чёткий контраст — но на тёплом кремовом фоне. Основная тема приложения.' },
+      { id: 'thB', cls: 'dir-B', badge: 'B',
+        title: 'Dark Editorial · ночная',
+        desc: 'Тёмный вариант того же языка. Переключается автоматически или по выбору пользователя. Хорош для вечернего чтения.' },
+      { id: 'thA', cls: 'dir-A', badge: 'A',
+        title: 'Warm Paper · архив',
+        desc: 'Серифная книжная альтернатива, если захочется больше «бумаги». Оставил для сравнения, не основная.' },
+      { id: 'thC', cls: 'dir-C', badge: 'C',
+        title: 'Soft Peach · архив',
+        desc: 'Светлый гибрид с персиковыми градиентами. Оставил для сравнения, не основная.' },
+    ];
+
+    const SCREENS = [
+      { key: 'lib',   label: 'Мои книги',          Comp: LibraryScreen,    cap: 'Главный экран · продолжение чтения, стрик, полка' },
+      { key: 'read',  label: 'Читалка',            Comp: ReaderScreen,     cap: 'Чтение · слова заменены переводом inline' },
+      { key: 'pop',   label: 'Попап слова',        Comp: WordPopupScreen,  cap: 'Тап по слову · перевод, пример, «В словарь»' },
+      { key: 'dict',  label: 'Словарь',            Comp: DictionaryScreen, cap: 'Собранные слова · статусы, фильтры, контекст' },
+      { key: 'learn', label: 'Тренировка',         Comp: LearnScreen,      cap: 'Карточки · 4 варианта, контекст из книги' },
+    ];
+
+    function App() {
+      return (
+        <>
+          {DIRECTIONS.map(dir => (
+            <section key={dir.id} className={`dir-section ${dir.cls}`}>
+              <div className="dir-header">
+                <span className="dir-badge">направление {dir.badge}</span>
+                <h2>{dir.title}</h2>
+              </div>
+              <div className="dir-desc">{dir.desc}</div>
+              <div className="row">
+                {SCREENS.map((s, i) => {
+                  const Comp = s.Comp;
+                  return (
+                    <div key={s.key} className="cell" data-screen-label={`${dir.badge} · ${String(i+1).padStart(2,'0')} ${s.label}`}>
+                      <Comp theme={dir.id}/>
+                      <div className="cap">
+                        <b>{String(i+1).padStart(2,'0')} · {s.label}</b>
+                        {s.cap}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+</body>
+</html>

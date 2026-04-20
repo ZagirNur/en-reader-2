@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EN Reader — Wireframes</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="primitives.jsx"></script>
+  <script type="text/babel" src="screens-1.jsx"></script>
+  <script type="text/babel" src="screens-2.jsx"></script>
+
+  <script type="text/babel">
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "accent": "#d4734a",
+      "paper": "#faf7f0",
+      "ink": "#1a1a1a",
+      "showAnnotations": true,
+      "fontStyle": "patrick"
+    }/*EDITMODE-END*/;
+
+    const FONTS = {
+      patrick: "'Patrick Hand', cursive",
+      kalam:   "'Kalam', cursive",
+      caveat:  "'Caveat', cursive",
+    };
+
+    function App() {
+      const [tweaks, setTweaks] = React.useState(TWEAK_DEFAULTS);
+      const [tweakOpen, setTweakOpen] = React.useState(false);
+
+      React.useEffect(() => {
+        const onMsg = (e) => {
+          if (!e.data || typeof e.data !== 'object') return;
+          if (e.data.type === '__activate_edit_mode') setTweakOpen(true);
+          if (e.data.type === '__deactivate_edit_mode') setTweakOpen(false);
+        };
+        window.addEventListener('message', onMsg);
+        window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+        return () => window.removeEventListener('message', onMsg);
+      }, []);
+
+      React.useEffect(() => {
+        const r = document.documentElement;
+        r.style.setProperty('--accent', tweaks.accent);
+        r.style.setProperty('--paper', tweaks.paper);
+        r.style.setProperty('--ink', tweaks.ink);
+        r.style.setProperty('--hand', FONTS[tweaks.fontStyle] || FONTS.patrick);
+      }, [tweaks]);
+
+      const setKey = (k, v) => {
+        const next = { ...tweaks, [k]: v };
+        setTweaks(next);
+        window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [k]: v } }, '*');
+      };
+
+      return (
+        <>
+          <DesignCanvas>
+            {/* Title strip */}
+            <div style={{ padding: '0 60px 30px' }}>
+              <div style={{ fontFamily: 'var(--hand-bold)', fontSize: 44, fontWeight: 700, lineHeight: 1, marginBottom: 6 }}>
+                EN Reader — наброски
+              </div>
+              <div style={{ fontSize: 14, color: 'rgba(60,50,40,0.65)', maxWidth: 640 }}>
+                Двигай двумя пальцами, зум — пинч. Скетчи: важен поток и структура, не визуал. В тулбаре сверху включи Tweaks чтобы поиграть с палитрой и шрифтами.
+              </div>
+            </div>
+
+            <DCSection title="① Библиотека" subtitle="Главный экран · сетка 2 в ряд · последняя карточка всегда +">
+              <ScreenLibrary />
+              <ScreenLibraryEmpty />
+              <ScreenBookMenu />
+              {tweaks.showAnnotations && (
+                <div style={{ position: 'relative', width: 220, paddingTop: 60 }}>
+                  <DCPostIt rotate={3} top={20} left={0} width={200}>
+                    Чипы: Все / Читаю / Прочитано. Быстрый фильтр без отдельных экранов.
+                  </DCPostIt>
+                  <DCPostIt rotate={-4} top={210} left={10} width={200} >
+                    Долгий тап по книге → детали + смена обложки.
+                  </DCPostIt>
+                </div>
+              )}
+            </DCSection>
+
+            <DCSection title="② Каталог" subtitle="Встроенные книги без лицензии · та же простая сетка">
+              <ScreenCatalog />
+              <ScreenCatalogDetail />
+              {tweaks.showAnnotations && (
+                <div style={{ position: 'relative', width: 220, paddingTop: 60 }}>
+                  <DCPostIt rotate={2} top={30} left={0} width={200}>
+                    Чипы по уровню CEFR (A1/B1/B2…) для быстрого фильтра. Тап → карточка → «+ Добавить в мои книги».
+                  </DCPostIt>
+                </div>
+              )}
+            </DCSection>
+
+            <DCSection title="③ Загрузка книги" subtitle="Drop-in: файл → автоматом название/автор/обложка. Редактируешь позже.">
+              <ScreenUpload />
+              <ScreenUploadProgress />
+              {tweaks.showAnnotations && (
+                <div style={{ position: 'relative', width: 240, paddingTop: 60 }}>
+                  <DCPostIt rotate={-3} top={40} left={10} width={210}>
+                    Поддержка .epub .fb2 .txt .mobi. Если обложки в файле нет — сгенерируется, потом можно заменить.
+                  </DCPostIt>
+                </div>
+              )}
+            </DCSection>
+
+            <DCSection title="④ Читалка и перевод" subtitle="Главное: тап → слово заменяется на перевод. Второй тап → попап с подсказкой и отменой.">
+              <ScreenReader />
+              <ScreenReaderSelect />
+              <ScreenReaderPopup />
+              <ScreenReaderSettings />
+              <ScreenReaderTOC />
+              <ScreenReaderDark />
+              {tweaks.showAnnotations && (
+                <div style={{ position: 'relative', width: 260, paddingTop: 60 }}>
+                  <DCPostIt rotate={2} top={20} left={10} width={230} color="#fed8a8">
+                    Перевод ЗАМЕНЯЕТ оригинал (как ты просил). Цветом помечено что это автоперевод.
+                  </DCPostIt>
+                  <DCPostIt rotate={-3} top={210} left={20} width={220}>
+                    Тап по переведённому слову → оригинал + карточка + ↩ отмена.
+                  </DCPostIt>
+                  <DCPostIt rotate={4} top={400} left={0} width={220} color="#c8e0c0">
+                    Все вхождения этого слова в тексте переводятся разом.
+                  </DCPostIt>
+                </div>
+              )}
+            </DCSection>
+
+            <DCSection title="⑤ Словарь" subtitle="Сохранённые слова. По умолчанию группы по статусу (новые / учу / знаю). Сортировка — через чипы.">
+              <ScreenDictionary />
+              <ScreenWordDetail />
+              {tweaks.showAnnotations && (
+                <div style={{ position: 'relative', width: 230, paddingTop: 60 }}>
+                  <DCPostIt rotate={-2} top={30} left={0} width={210}>
+                    Три счётчика сверху — быстрый обзор «что делать сегодня».
+                  </DCPostIt>
+                  <DCPostIt rotate={3} top={220} left={10} width={210}>
+                    Карточка слова показывает исходное предложение из книги. Контекст = лучше запоминается.
+                  </DCPostIt>
+                </div>
+              )}
+            </DCSection>
+
+            <DCSection title="⑥ Тренировки" subtitle="Два режима: карточки и выбор варианта. Цель дня + серия.">
+              <ScreenTrainingHome />
+              <ScreenFlashcardFront />
+              <ScreenFlashcardBack />
+              <ScreenMultipleChoice />
+              <ScreenSessionDone />
+              {tweaks.showAnnotations && (
+                <div style={{ position: 'relative', width: 230, paddingTop: 60 }}>
+                  <DCPostIt rotate={2} top={20} left={0} width={210} color="#c8d4e0">
+                    Карточки с 4 кнопками самооценки (Снова / Сложно / Хорошо / Легко) — интервальные повторения.
+                  </DCPostIt>
+                </div>
+              )}
+            </DCSection>
+
+            <DCSection title="⑦ Настройки" subtitle="Компактно. Только нужное.">
+              <ScreenSettings />
+            </DCSection>
+
+            <DCSection title="⑧ Варианты навигации" subtitle="Выбери структуру — экраны те же, оболочка разная.">
+              <NavVarA />
+              <NavVarB />
+              <NavVarC />
+              {tweaks.showAnnotations && (
+                <div style={{ position: 'relative', width: 240, paddingTop: 30 }}>
+                  <DCPostIt rotate={-3} top={20} left={0} width={220}>
+                    A — самая заметная. B — компактнее. C — объединяет учебные инструменты, вкладок меньше, но «Учёба» перегружена.
+                  </DCPostIt>
+                </div>
+              )}
+            </DCSection>
+
+            <DCSection title="⑨ Десктоп / планшет" subtitle="Mobile-first, но адаптируется: боковое меню, шире сетка.">
+              <ScreenDesktop />
+            </DCSection>
+
+            <div style={{ padding: '0 60px 80px', maxWidth: 720, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+              <div style={{ fontFamily: 'var(--hand-bold)', fontSize: 20 }}>Следующий шаг</div>
+              <div style={{ fontSize: 14, color: 'rgba(40,30,20,0.7)' }}>
+                Скетчи утверждены — можно переходить к hi-fi дизайну: цвета, типографика, живые интерактивы.
+              </div>
+              <button style={{
+                marginTop: 6,
+                padding: '12px 22px',
+                border: '2px solid #1a1a1a',
+                borderRadius: 26,
+                background: '#1a1a1a',
+                color: '#faf7f0',
+                fontFamily: 'var(--hand-bold)',
+                fontSize: 18,
+                cursor: 'pointer',
+                boxShadow: '3px 3px 0 rgba(0,0,0,0.25)',
+              }}>→ Перейти к hi-fi</button>
+            </div>
+          </DesignCanvas>
+
+          {tweakOpen && (
+            <div style={{
+              position: 'fixed', right: 16, bottom: 16, width: 280,
+              background: '#fff', border: '2px solid #1a1a1a',
+              borderRadius: 10, padding: 14, zIndex: 1000,
+              boxShadow: '4px 4px 0 rgba(0,0,0,0.3)',
+              fontFamily: 'var(--hand)',
+            }}>
+              <div style={{ fontFamily: 'var(--hand-bold)', fontSize: 18, marginBottom: 10 }}>Tweaks</div>
+
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>ПОКАЗАТЬ ЗАМЕТКИ</div>
+                <button
+                  onClick={() => setKey('showAnnotations', !tweaks.showAnnotations)}
+                  style={{
+                    padding: '4px 10px', border: '1.5px solid #1a1a1a', borderRadius: 16,
+                    background: tweaks.showAnnotations ? '#1a1a1a' : '#fff',
+                    color: tweaks.showAnnotations ? '#fff' : '#1a1a1a',
+                    fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
+                  }}>{tweaks.showAnnotations ? 'Вкл' : 'Выкл'}</button>
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>АКЦЕНТ</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['#d4734a', '#6b8c6b', '#4a73d4', '#a04a8c', '#d4a04a'].map(c => (
+                    <button key={c} onClick={() => setKey('accent', c)} style={{
+                      width: 26, height: 26, borderRadius: '50%',
+                      background: c, border: tweaks.accent === c ? '2px solid #1a1a1a' : '1px solid #ccc',
+                      cursor: 'pointer',
+                    }} />
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>БУМАГА</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['#faf7f0', '#ffffff', '#f4ebd3', '#ebeae5'].map(c => (
+                    <button key={c} onClick={() => setKey('paper', c)} style={{
+                      width: 26, height: 26, borderRadius: 4,
+                      background: c, border: tweaks.paper === c ? '2px solid #1a1a1a' : '1px solid #ccc',
+                      cursor: 'pointer',
+                    }} />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>ШРИФТ</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[
+                    { id: 'patrick', label: 'Patrick' },
+                    { id: 'kalam', label: 'Kalam' },
+                    { id: 'caveat', label: 'Caveat' },
+                  ].map(f => (
+                    <button key={f.id} onClick={() => setKey('fontStyle', f.id)} style={{
+                      padding: '4px 10px', borderRadius: 14,
+                      border: '1.5px solid #1a1a1a',
+                      background: tweaks.fontStyle === f.id ? '#1a1a1a' : '#fff',
+                      color: tweaks.fontStyle === f.id ? '#fff' : '#1a1a1a',
+                      fontFamily: FONTS[f.id], fontSize: 13, cursor: 'pointer',
+                    }}>{f.label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

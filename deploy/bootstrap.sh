@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# en-reader VPS bootstrap (M13.1).
+#
+# Idempotent: safe to re-run. Installs system packages, creates the
+# unprivileged `enreader` user, clones/pulls the repo into /opt/en-reader,
+# sets up a Python 3.11 venv, writes a .env template on first run, installs
+# the systemd unit, and opens the firewall on :22 + :80.
+#
+# Usage on a fresh Ubuntu 22.04+:
+#   sudo ./deploy/bootstrap.sh
+# or remotely via curl (see deploy/README.md).
+
+set -euo pipefail
+
+APP_USER="${APP_USER:-enreader}"
+APP_HOME="${APP_HOME:-/opt/en-reader}"
+REPO_URL="${REPO_URL:-https://github.com/ZagirNur/en-reader-2.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+
+if [[ $EUID -ne 0 ]]; then
+  echo "bootstrap.sh must run as root (use sudo)" >&2
+  exit 1
+fi
+
+# 1. Packages.
+apt-get update
+# M17.5: support Ubuntu 22.04 (python 3.10) + 24.04 (python 3.12). We
+# install whichever default `python3` the distro ships — our project
+# requires >= 3.11, satisfied by 24.04 out of the box. On 22.04 we
+# additionally pull `python3.11` via the deadsnakes PPA.
+if ! command -v python3.11 >/dev/null 2>&1 && \
+   ! apt-cache show python3.11 >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    python3 python3-venv python3-pip git ufw ca-certificates curl gnupg rclone
+  PYTHON_BIN="python3"
+else
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    python3.11 python3.11-venv python3-pip git ufw ca-certificates curl gnupg rclone
+  PYTHON_BIN="python3.11"
+fi
+
+# 1a. Caddy (M13.4) for TLS termination + reverse proxy to :8080. Installed
+#     unconditionally; the bootstrap leaves /etc/caddy/Caddyfile untouched
+#     so operators can paste the real domain at their leisure — Caddy won't
+#     try to fetch a cert until the Caddyfile points at a real hostname.
+if ! command -v caddy >/dev/null 2>&1; then
+  install -d -m 0755 /usr/share/keyrings
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    > /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+fi
+
+# 2. Unprivileged service user.
+if ! id -u "$APP_USER" >/dev/null 2>&1; then
+  useradd --system --shell /bin/bash --home "$APP_HOME" "$APP_USER"
+fi
+mkdir -p "$APP_HOME"
+chown -R "$APP_USER:$APP_USER" "$APP_HOME"
+
+# 3. Repo (clone or pull).
+sudo -u "$APP_USER" bash -c "
+  set -euo pipefail
+  cd '$APP_HOME'
+  if [ ! -d .git ]; then
+    git clone --branch '$REPO_BRANCH' '$REPO_URL' .
+  else
+    git fetch --prune
+    git checkout '$REPO_BRANCH'
+    git pull --ff-only
+  fi
+"
+
+# 4. venv + deps + spaCy model. `pip install -e .` pulls the model wheel
+#    pinned in pyproject.toml, so a separate `python -m spacy download` is
+#    not needed (that step was retired in M1.5).
+sudo -u "$APP_USER" bash -c "
+  set -euo pipefail
+  cd '$APP_HOME'
+  if [ ! -d .venv ]; then
+    $PYTHON_BIN -m venv .venv
+  fi
+  .venv/bin/pip install --upgrade pip
+  .venv/bin/pip install -e .
+"
+
+# 5. Writable data dirs (covers + SQLite).
+sudo -u "$APP_USER" mkdir -p "$APP_HOME/data" "$APP_HOME/data/covers"
+
+# 6. .env seeded on first run only — never overwrite existing secrets.
+if [ ! -f "$APP_HOME/.env" ]; then
+  cat > "$APP_HOME/.env" <<'EOF'
+GEMINI_API_KEY=SET_ME
+GEMINI_MODEL=gemini-2.5-flash-lite
+ENV=prod
+EOF
+  chown "$APP_USER:$APP_USER" "$APP_HOME/.env"
+  chmod 600 "$APP_HOME/.env"
+fi
+
+# 6a. Caddy config (M17.5). Install the prod Caddyfile only if the
+#     operator hasn't hand-edited /etc/caddy/Caddyfile. `cmp -s` returns
+#     true when the files match, so we also refresh when the repo copy
+#     has diverged from a previous bootstrap run.
+if [ -f "$APP_HOME/deploy/Caddyfile" ]; then
+  if [ ! -s /etc/caddy/Caddyfile ] || \
+     ! cmp -s "$APP_HOME/deploy/Caddyfile" /etc/caddy/Caddyfile; then
+    install -m 0644 "$APP_HOME/deploy/Caddyfile" /etc/caddy/Caddyfile
+    systemctl reload caddy || systemctl restart caddy
+  fi
+fi
+
+# 7. systemd units (service + autopull timer from M13.2).
+install -m 0644 "$APP_HOME/deploy/en-reader.service" \
+  /etc/systemd/system/en-reader.service
+install -m 0644 "$APP_HOME/deploy/en-reader-autopull.service" \
+  /etc/systemd/system/en-reader-autopull.service
+install -m 0644 "$APP_HOME/deploy/en-reader-autopull.timer" \
+  /etc/systemd/system/en-reader-autopull.timer
+install -m 0644 "$APP_HOME/deploy/en-reader-backup.service" \
+  /etc/systemd/system/en-reader-backup.service
+install -m 0644 "$APP_HOME/deploy/en-reader-backup.timer" \
+  /etc/systemd/system/en-reader-backup.timer
+chmod +x "$APP_HOME/deploy/autopull.sh" \
+         "$APP_HOME/deploy/backup.sh" \
+         "$APP_HOME/deploy/restore.sh"
+systemctl daemon-reload
+systemctl enable en-reader
+systemctl restart en-reader
+systemctl enable en-reader-autopull.timer
+systemctl start en-reader-autopull.timer
+# Backup timer is enabled but only fires once rclone is configured — the
+# backup.sh script errors loudly on missing remote.
+systemctl enable en-reader-backup.timer
+systemctl start en-reader-backup.timer
+
+# 8. Firewall — SSH must go up BEFORE enabling ufw or we lock ourselves out.
+#    :80 + :443 are Caddy's responsibility; uvicorn stays on localhost:8080
+#    which we intentionally do NOT open.
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+
+cat <<EOF
+
+Bootstrap OK.
+
+Next steps:
+  1. Edit $APP_HOME/.env and set GEMINI_API_KEY=<your key>.
+  2. sudo systemctl restart en-reader
+  3. Open http://<this-host>/ — you should see the login screen.
+
+Logs:    journalctl -u en-reader -f
+Status:  systemctl status en-reader
+EOF

@@ -1,0 +1,459 @@
+/* Sketchy wireframe styles */
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Kalam:wght@300;400;700&family=Patrick+Hand&display=swap');
+
+:root {
+  --ink: #1a1a1a;
+  --ink-2: #4a4a4a;
+  --ink-3: #8a8a8a;
+  --paper: #faf7f0;
+  --paper-2: #f0ece0;
+  --accent: #d4734a;
+  --accent-2: #6b8c6b;
+  --line: 1.5px solid var(--ink);
+  --line-thin: 1px solid var(--ink);
+  --line-dashed: 1.5px dashed var(--ink-2);
+  --hand: 'Patrick Hand', 'Kalam', cursive;
+  --hand-bold: 'Caveat', cursive;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--hand);
+  color: var(--ink);
+  background: #f0eee9;
+}
+
+/* Phone frame */
+.phone {
+  width: 360px;
+  height: 720px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 32px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.phone-notch {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90px;
+  height: 18px;
+  background: var(--ink);
+  border-radius: 12px;
+  z-index: 50;
+}
+
+.status-bar {
+  height: 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 24px 4px;
+  font-family: var(--hand);
+  font-size: 13px;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+
+.status-bar .right { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+
+.screen-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px;
+}
+
+/* Top bar */
+.app-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 18px 12px;
+  flex-shrink: 0;
+}
+.app-top h1 {
+  font-family: var(--hand-bold);
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0;
+}
+.app-top .icon-row { display: flex; gap: 14px; }
+
+/* Tab bar */
+.tab-bar {
+  display: flex;
+  border-top: var(--line);
+  background: var(--paper);
+  height: 64px;
+  flex-shrink: 0;
+}
+.tab-bar .tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 11px;
+  font-family: var(--hand);
+  color: var(--ink-2);
+  padding-bottom: 4px;
+}
+.tab-bar .tab.active { color: var(--ink); font-weight: 700; }
+.tab-bar .tab.active .tab-icon { background: var(--ink); color: var(--paper); }
+.tab-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+/* Sketchy box */
+.sk-box {
+  border: var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  position: relative;
+}
+.sk-box.dashed { border: var(--line-dashed); }
+.sk-box.shadow { box-shadow: 2px 2px 0 var(--ink); }
+
+/* Book cover */
+.book-cover {
+  aspect-ratio: 2/3;
+  border: var(--line);
+  border-radius: 4px;
+  background: var(--paper-2);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.book-cover .cover-stripes {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0,
+    transparent 8px,
+    rgba(0,0,0,0.06) 8px,
+    rgba(0,0,0,0.06) 9px
+  );
+}
+.book-cover .cover-title {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 12px;
+  text-align: center;
+  font-family: var(--hand-bold);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.book-cover .cover-author {
+  position: absolute;
+  bottom: 8px;
+  left: 0; right: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--ink-2);
+}
+
+.book-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.book-card .meta {
+  font-size: 12px;
+  line-height: 1.2;
+}
+.book-card .meta .title {
+  font-weight: 700;
+  font-family: var(--hand-bold);
+  font-size: 15px;
+}
+.book-card .meta .author {
+  color: var(--ink-2);
+  font-size: 11px;
+}
+.book-card .progress {
+  height: 4px;
+  background: var(--paper-2);
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+.book-card .progress > div {
+  height: 100%;
+  background: var(--ink);
+}
+
+/* Add new card */
+.add-card {
+  aspect-ratio: 2/3;
+  border: 2px dashed var(--ink-2);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.02);
+}
+.add-card .plus {
+  font-size: 36px;
+  font-family: var(--hand-bold);
+  font-weight: 400;
+  line-height: 1;
+}
+.add-card .label {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* Reader text */
+.reader-text {
+  font-family: 'Patrick Hand', Georgia, serif;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+.reader-text p { margin: 0 0 12px; }
+
+.tr-word {
+  background: rgba(212, 115, 74, 0.18);
+  border-bottom: 1.5px solid var(--accent);
+  padding: 0 2px;
+  border-radius: 2px;
+  color: #8a4020;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* Translation popup */
+.tr-popup {
+  position: absolute;
+  background: var(--paper);
+  border: var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 3px 3px 0 var(--ink);
+  font-size: 13px;
+  z-index: 20;
+  min-width: 200px;
+}
+.tr-popup .pop-arrow {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--paper);
+  border-left: var(--line);
+  border-top: var(--line);
+  transform: rotate(45deg);
+  top: -7px;
+}
+
+/* Bottom sheet */
+.sheet {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  background: var(--paper);
+  border-top: var(--line);
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  padding: 14px 18px 18px;
+  box-shadow: 0 -4px 0 -1px var(--ink);
+  z-index: 30;
+}
+.sheet .grabber {
+  width: 40px;
+  height: 4px;
+  background: var(--ink-3);
+  border-radius: 2px;
+  margin: 0 auto 12px;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: var(--line);
+  border-radius: 24px;
+  background: var(--paper);
+  font-family: var(--hand);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+  cursor: pointer;
+}
+.btn.primary { background: var(--ink); color: var(--paper); }
+.btn.accent { background: var(--accent); color: var(--paper); border-color: var(--ink); }
+.btn.full { width: 100%; }
+.btn.sm { padding: 6px 12px; font-size: 12px; box-shadow: 1.5px 1.5px 0 var(--ink); }
+
+/* Chip */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 20px;
+  font-size: 11px;
+  background: var(--paper);
+}
+.chip.filled { background: var(--ink); color: var(--paper); }
+
+/* List row */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px dashed var(--ink-3);
+}
+.list-row:last-child { border-bottom: none; }
+
+/* Sketchy underline */
+.scribble {
+  position: relative;
+  display: inline-block;
+}
+.scribble::after {
+  content: '';
+  position: absolute;
+  left: -4px; right: -4px;
+  bottom: -4px;
+  height: 8px;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 8'><path d='M2,5 Q15,1 30,4 T60,4 T98,5' stroke='%23d4734a' stroke-width='2' fill='none' stroke-linecap='round'/></svg>") no-repeat center / 100% 100%;
+}
+
+/* Icon (simple) */
+.ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  font-family: var(--hand-bold);
+  font-size: 18px;
+}
+
+/* Flashcard */
+.flashcard {
+  width: 100%;
+  aspect-ratio: 4/3;
+  border: var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 4px 4px 0 var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Cover variants */
+.cv-1 { background: #e8dfcc; }
+.cv-2 { background: #d4cab0; }
+.cv-3 { background: #c9d4c0; }
+.cv-4 { background: #d4b8a8; }
+.cv-5 { background: #b8c4d4; }
+.cv-6 { background: #e0c8a8; }
+.cv-7 { background: #c8b8d4; }
+.cv-8 { background: #d8d4c0; }
+
+/* Dark theme reader */
+.theme-dark { background: #1a1a1a; color: #e8e6df; }
+.theme-dark .reader-text { color: #e8e6df; }
+.theme-dark .tr-word { background: rgba(212, 115, 74, 0.3); color: #f0a070; border-color: var(--accent); }
+
+/* Sepia theme reader */
+.theme-sepia { background: #f4ebd3; }
+
+/* Annotation arrow */
+.note-arrow {
+  position: absolute;
+  font-family: var(--hand-bold);
+  font-size: 16px;
+  color: var(--accent);
+  z-index: 10;
+}
+
+/* Empty state */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 20px;
+  gap: 12px;
+  color: var(--ink-2);
+}
+
+/* Frame caption (for canvas) */
+.frame-caption {
+  font-family: var(--hand-bold);
+  font-size: 18px;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.frame-sub {
+  font-family: var(--hand);
+  font-size: 13px;
+  color: var(--ink-2);
+  margin-bottom: 14px;
+  max-width: 360px;
+}
+
+/* Tab pill (for switching between variations within a card) */
+.var-tabs {
+  display: inline-flex;
+  border: var(--line);
+  border-radius: 20px;
+  padding: 3px;
+  background: var(--paper);
+  gap: 2px;
+}
+.var-tabs button {
+  border: none;
+  background: transparent;
+  padding: 4px 12px;
+  font-family: var(--hand);
+  font-size: 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.var-tabs button.active { background: var(--ink); color: var(--paper); }

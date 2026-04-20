@@ -1,0 +1,955 @@
+/* --- M16.1: design tokens (light + dark palettes). ---------------------- */
+:root {
+  --bg: #f6f4ef; --bg-2: #ecebe5; --card: #ffffff;
+  --ink: #14141a; --ink-2: #5c5c66; --ink-3: #9a9aa5;
+  --line: #e1dfd5; --accent: #e85d2c; --accent-2: #ff7a45;
+  --soft: #ecebe5;
+  --body-bg: #d8d3c7;
+}
+html.dark, body.dark {
+  --bg: #0e0e10; --bg-2: #17171a; --card: #17171a;
+  --ink: #ebebef; --ink-2: #9a9aa5; --ink-3: #5c5c66;
+  --line: #27272e; --accent: #ff7a45; --accent-2: #ffa88a;
+  --soft: #1f1f24;
+  --body-bg: #1a1a1e;
+}
+
+/* --- M16.1: base reset + typography. ----------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  background: #d8d3c7;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 32px 16px;
+  transition: background 0.3s, color 0.3s;
+}
+body.dark { background: #1a1a1e; }
+
+/* --- M17.1: desktop phone shell (matches the Theme D prototype). The
+     @media (max-width: 480px) block at the bottom strips the frame
+     so mobile viewports go full-bleed. Phone is visual chrome only —
+     it wraps the app but doesn't own the scroll, so all the existing
+     `window.scrollY` / progress-save logic in the reader keeps
+     working unchanged on desktop. ---------------------------------- */
+.stage { display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; }
+.phone {
+  width: 390px;
+  border-radius: 48px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 8px solid #000;
+  box-shadow: 0 28px 56px -20px rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.15);
+  position: relative;
+  display: flex; flex-direction: column;
+  transition: background 0.3s, color 0.3s;
+  min-height: 800px;
+}
+.notch {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 28px; background: #000; border-radius: 18px; z-index: 60;
+}
+.statusbar {
+  height: 46px; padding: 14px 28px 0;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  font-size: 14px; font-weight: 600; flex-shrink: 0; color: var(--ink);
+}
+.homebar {
+  position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+  width: 130px; height: 4px; border-radius: 2px;
+  background: var(--ink); opacity: 0.45; z-index: 55;
+}
+.phone-body {
+  flex: 1; position: relative;
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.phone-body > #root {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.phone-body > #root > main {
+  flex: 1 0 auto;
+}
+h1, h2, h3 { font-family: 'Geist', sans-serif; letter-spacing: -0.02em; }
+h1 { font-size: 30px; font-weight: 600; margin: 0; }
+h2 { font-size: 22px; font-weight: 600; margin: 0; }
+h3 { font-size: 20px; font-weight: 600; margin: 0; }
+.serif { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+.uplabel {
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: 500;
+}
+
+/* --- M16.1: layout utilities. ----------------------------------------- */
+.h-pad { padding-left: 22px; padding-right: 22px; }
+.v-gap-16 > * + * { margin-top: 16px; }
+
+.loader, .error { padding: 2rem; text-align: center; }
+button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
+
+.reader { padding: 26px 26px 16px; }
+.sentinel { height: 1px; }
+.page-body {
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.page-body p { margin: 0 0 14px; }
+.page + .page { margin-top: 1.5rem; }
+.page .uplabel {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 500;
+  margin-bottom: 14px;
+}
+
+.size-s .page-body { font-size: 16px; }
+.size-m .page-body { font-size: 17px; }
+.size-l .page-body { font-size: 19px; }
+.size-xl .page-body { font-size: 21px; }
+
+.word {
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+.word:hover { background: color-mix(in oklab, var(--accent) 8%, transparent); }
+.word.translated {
+  background: color-mix(in oklab, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent);
+  font-weight: 500;
+}
+.word.highlighted {
+  background: color-mix(in oklab, var(--accent) 25%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+
+.word.loading { opacity: 0.45; pointer-events: none; }
+
+.inline-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem auto;
+  border-radius: 4px;
+}
+
+.toast {
+  position: fixed; top: 1rem; left: 50%; transform: translateX(-50%) translateY(-20px);
+  background: var(--ink); color: var(--bg);
+  padding: 0.5rem 1rem; border-radius: 6px;
+  font-size: 14px; font-weight: 500;
+  opacity: 0; transition: opacity 0.2s, transform 0.2s;
+  z-index: 1000; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.sheet-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  z-index: 900;
+}
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  background: var(--card); color: var(--ink);
+  border-top-left-radius: 16px; border-top-right-radius: 16px;
+  padding: 1.5rem 1.25rem 2rem;
+  box-shadow: 0 -8px 24px rgba(0,0,0,0.15);
+  z-index: 901; max-height: 80vh; overflow-y: auto;
+}
+.sheet-headword { font-size: 34px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
+.sheet-meta { font-size: 13px; color: var(--ink-2); font-style: italic; margin: 6px 0 16px; }
+.sheet-card { background: var(--soft); border-radius: 14px; padding: 14px; margin-bottom: 16px; }
+.sheet-translation { font-size: 18px; font-weight: 500; }
+.sheet-from-book .uplabel { margin-bottom: 8px; }
+.sheet-from-book-text { font-size: 13px; line-height: 1.5; color: var(--ink); }
+.sheet-actions { display: flex; gap: 10px; margin-top: 20px; }
+/* --- M16.1: generic button system. ------------------------------------ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px 20px; border-radius: 12px;
+  font-family: inherit; font-size: 15px; font-weight: 600;
+  border: none; cursor: pointer;
+  transition: transform 0.08s, background 0.15s;
+}
+.btn:active { transform: scale(0.97); }
+.btn.primary { background: var(--ink); color: var(--bg); }
+.btn.accent  { background: var(--accent); color: #fff; }
+.btn.ghost   { background: var(--bg-2); color: var(--ink); }
+.btn.full    { width: 100%; }
+.btn.sm      { padding: 10px 14px; font-size: 13px; border-radius: 10px; }
+.btn:disabled { opacity: 0.7; cursor: default; }
+
+/* --- M16.1: chips. ---------------------------------------------------- */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 500;
+  background: var(--bg-2); color: var(--ink-2);
+  border: 1px solid transparent; cursor: pointer;
+  font-family: inherit;
+}
+.chip.on { background: var(--ink); color: var(--bg); }
+.chip .n { opacity: 0.5; font-weight: 400; margin-left: 2px; }
+
+/* --- M16.1: generic progress bar. ------------------------------------- */
+.pbar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.pbar > i { display: block; height: 100%; background: var(--accent); }
+
+/* --- M16.1: generic cover box (cover-preset classes .c-* defined below). */
+.cover {
+  aspect-ratio: 2 / 3; border-radius: 6px; overflow: hidden;
+  position: relative; display: flex; flex-direction: column;
+  padding: 12px 10px; color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06), 0 10px 24px -14px rgba(0,0,0,0.3);
+}
+.cover::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.1), transparent 30%, rgba(0,0,0,0.18));
+  pointer-events: none;
+}
+.cover .ct { font-family: 'Instrument Serif', Georgia, serif; font-size: 16px; line-height: 1.05; }
+.cover .ca {
+  margin-top: auto; font-size: 8px; letter-spacing: 0.14em;
+  text-transform: uppercase; opacity: 0.78; font-weight: 500;
+}
+
+/* M16.1: 7 deterministic gradient presets for book covers (light + dark).
+   Paired with _COVER_PRESETS on the backend and `coverPresetFor(book_id)`
+   on the frontend. `.cover.c-mustard` uses dark ink because yellow-on-white
+   fails contrast. */
+.cover.c-olive   { background: linear-gradient(150deg, #6a7a42, #3d4826); }
+.cover.c-clay    { background: linear-gradient(150deg, #c85a38, #7a2a18); }
+.cover.c-ink     { background: linear-gradient(150deg, #2a3342, #0f141c); }
+.cover.c-mauve   { background: linear-gradient(150deg, #8c5a6b, #4a2a35); }
+.cover.c-mustard { background: linear-gradient(150deg, #c9a253, #7a5a1c); color: #14141a; }
+.cover.c-mustard .ca { color: #14141a; }
+.cover.c-sage    { background: linear-gradient(150deg, #8a9a6c, #4a5836); }
+.cover.c-rose    { background: linear-gradient(150deg, #c8685a, #6f2e24); }
+.dark .cover.c-olive   { background: linear-gradient(150deg, #3a4424, #1d2212); }
+.dark .cover.c-clay    { background: linear-gradient(150deg, #b85a38, #5a2612); }
+.dark .cover.c-ink     { background: linear-gradient(150deg, #303a4c, #0a0d14); }
+.dark .cover.c-mauve   { background: linear-gradient(150deg, #6f4658, #3a2530); }
+.dark .cover.c-mustard { background: linear-gradient(150deg, #c9a253, #5a4418); }
+.dark .cover.c-sage    { background: linear-gradient(150deg, #6b7d5a, #3a4632); }
+.dark .cover.c-rose    { background: linear-gradient(150deg, #a85c4c, #5a2a20); }
+
+/* --- Library (M9.2 / refreshed for M17.1 design-parity) --- */
+.library { padding: 18px 22px 24px; }
+.library-header {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  margin-bottom: 18px;
+}
+.library-header .date {
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: 500; margin-bottom: 2px;
+}
+.library-header h1 {
+  font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+  margin: 0; color: var(--ink);
+}
+.avatar {
+  width: 38px; height: 38px; border-radius: 20px;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600;
+}
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; row-gap: 22px; }
+
+.card {
+  aspect-ratio: 2 / 3;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  cursor: pointer; position: relative;
+  padding: 0;
+  font: inherit; color: inherit;
+  text-align: left;
+}
+.card:hover { transform: translateY(-2px); transition: transform 120ms; }
+.card .cover-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 2rem; background: var(--bg); }
+.card img.cover { flex: 1; min-height: 0; width: 100%; object-fit: cover; display: block; }
+
+/* M12.4: deterministic gradient presets for books without a real cover. */
+.card .cover-placeholder.c-olive   { background: linear-gradient(135deg, #7a8a52, #4f5a32); color: rgba(255,255,255,0.85); }
+.card .cover-placeholder.c-clay    { background: linear-gradient(135deg, #c67a4a, #8a4a22); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-ink     { background: linear-gradient(135deg, #2a2a32, #0c0c0e); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-mauve   { background: linear-gradient(135deg, #9a6a8a, #5a3a52); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-mustard { background: linear-gradient(135deg, #d4b05a, #8f6a1e); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-sage    { background: linear-gradient(135deg, #8ab09a, #4e6e5e); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-rose    { background: linear-gradient(135deg, #d47a8a, #8a3a4a); color: rgba(255,255,255,0.9); }
+
+.card .meta { padding: 0.5rem 0.75rem; background: var(--card); }
+.card .title { font-weight: 600; font-size: 13px; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card .author { color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+.add-card {
+  aspect-ratio: 2 / 3;
+  border: 2px dashed var(--line);
+  background: transparent;
+  font-size: 0.95rem;
+  color: var(--ink-2);
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  cursor: pointer;
+}
+.add-card:hover { border-color: var(--ink-2); color: var(--ink); }
+
+/* M17.3: empty library no longer collapses to a centered flex — that
+   pulled the header, grid, and add-card into a single horizontal row.
+   Header stays pinned top, the grid (with just the add-card tile)
+   renders in its normal place. */
+
+.card-menu {
+  position: absolute; z-index: 50;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  padding: 0.25rem;
+}
+.card-menu button {
+  background: transparent; border: none;
+  padding: 0.5rem 0.75rem;
+  font: inherit; color: inherit;
+  cursor: pointer; width: 100%; text-align: left;
+  border-radius: 4px;
+}
+.card-menu button:hover { background: var(--bg-2); }
+
+/* --- Upload skeleton card (M12.4) --- */
+.card.uploading { opacity: 0.7; pointer-events: none; }
+.card.uploading .cover-placeholder { display: flex; align-items: center; justify-content: center; }
+.spinner {
+  width: 24px; height: 24px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- Reader sticky header (M9.3) --- */
+.reader-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in oklab, var(--bg) 95%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+  padding: 0.5rem 1rem;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  transition: transform 200ms ease-out;
+}
+.reader-header.hidden { transform: translateY(-100%); }
+
+.reader-header .back-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 1.25rem; color: var(--ink);
+  padding: 0.25rem 0.5rem;
+}
+.reader-header .book-title {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reader-header .progress-bar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: transparent;
+}
+.reader-header .progress-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  transition: width 200ms;
+}
+
+/* --- Login / signup (M11.3) --- */
+.auth-view { padding: 5rem 22px 2rem; text-align: center; }
+.auth-view h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 1.5rem; color: var(--ink); }
+.auth-view form { display: flex; flex-direction: column; gap: 0.75rem; }
+.auth-view input {
+  width: 100%; padding: 12px 14px; font-size: 15px; font: inherit;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card); color: var(--ink);
+  box-sizing: border-box;
+}
+.auth-view button[type="submit"] {
+  padding: 12px 14px; font: inherit; font-weight: 500;
+  border: none; border-radius: 12px;
+  background: var(--ink); color: var(--bg); cursor: pointer;
+}
+.auth-view .auth-switch {
+  background: transparent; border: none; padding: 0.5rem;
+  color: var(--ink-2); font: inherit; cursor: pointer;
+  text-decoration: underline;
+  margin-top: 0.5rem;
+}
+.auth-view .error { color: var(--accent); margin-top: 0.5rem; min-height: 1.2em; }
+
+.library-header-right { display: flex; align-items: center; gap: 0.5rem; }
+.logout-btn {
+  background: transparent; border: none; cursor: pointer;
+  font-size: 1rem; color: var(--ink-2); padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+.logout-btn:hover { color: var(--ink); background: var(--bg-2); }
+
+/* --- M16.2: canonical shared components (scrim, sheet, toast, tabbar). ---
+   Coexists with the M4.2 ad-hoc `.sheet-backdrop` + ad-hoc toast DOM above.
+   These rules drive the #scrim / #sheet / #toast / #tabbar shells in
+   index.html, which are lazy-populated by openSheet/showToast/renderTabBar. */
+
+/* scrim (fixed — covers the whole viewport so it still works the same
+   with or without the desktop phone shell wrapper). */
+.scrim {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(0,0,0,0.32);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s;
+}
+.scrim.show { opacity: 1; pointer-events: auto; }
+
+/* sheet — canonical #sheet shell is transform-hidden by default;
+   it only renders visibly once openSheet() adds the `.show` class. */
+#sheet.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 100;
+  background: var(--card); color: var(--ink);
+  border-top-left-radius: 28px; border-top-right-radius: 28px;
+  padding: 16px 22px 28px;
+  transform: translateY(100%);
+  transition: transform 0.28s cubic-bezier(.2,.9,.3,1);
+  box-shadow: 0 -20px 40px -14px rgba(0,0,0,0.35);
+  max-width: 390px; margin: 0 auto;
+  max-height: 85vh; overflow-y: auto;
+}
+#sheet.sheet.show { transform: translateY(0); }
+.sheet .handle {
+  width: 40px; height: 4px; border-radius: 2px; background: var(--line);
+  margin: 0 auto 16px;
+}
+
+/* toast — top:60 matches the prototype's "above the header" position
+   inside the phone. Rounded-pill shape + ink/bg inversion. */
+#toast.toast {
+  position: fixed; top: 60px; left: 50%;
+  transform: translate(-50%, -20px);
+  background: var(--ink); color: var(--bg);
+  padding: 10px 16px; border-radius: 999px;
+  font-size: 13px; font-weight: 500;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 150;
+  box-shadow: 0 10px 24px -8px rgba(0,0,0,0.3);
+}
+#toast.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* M17.3: tab bar pins to the bottom of .phone-body so on desktop it
+   hugs the phone-shell bottom (was fixed to viewport bottom, which
+   floated below the phone on short content). On mobile the @media
+   block at the bottom of this file re-pins it to the viewport since
+   the shell is stripped and .phone goes full-height. */
+.tabbar {
+  position: sticky; bottom: 0;
+  margin-top: auto;
+  display: flex; padding: 8px 10px 30px;
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line);
+  z-index: 80;
+}
+.tabbar.hidden { display: none; }
+.tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 0; cursor: pointer; position: relative;
+  font-size: 10px; font-weight: 500; color: var(--ink-3);
+  background: none; border: none;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+.tab.on { color: var(--ink); }
+.tab.on .tab-dot {
+  position: absolute; bottom: -8px; width: 4px; height: 4px;
+  border-radius: 50%; background: var(--accent);
+}
+.tab svg { width: 22px; height: 22px; }
+
+/* M17.3: desktop tabbar is `position: sticky` inside .phone-body and
+   participates in layout, so no #root padding-bottom is needed. On
+   mobile the @media rule at the bottom switches it back to fixed
+   and re-applies the 82 px padding. */
+
+/* --- M16.4: dictionary screen ---------------------------------------- */
+.dictionary { padding: 0 22px 24px; }
+.dict-header { display: flex; align-items: baseline; justify-content: space-between; padding: 18px 0 10px; }
+.dict-header .counter { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.dict-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  padding: 12px 0;
+}
+.dict-stats .stat { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.dict-stats .n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.dict-stats .n.review { color: var(--accent); }
+.dict-stats .lbl { font-size: 10px; color: var(--ink-2); letter-spacing: 0.08em; text-transform: uppercase; }
+
+.dict-filters {
+  display: flex; gap: 8px; overflow-x: auto; padding: 10px 0; margin: 0 -22px;
+  padding-left: 22px; padding-right: 22px;
+}
+.dict-filters::-webkit-scrollbar { display: none; }
+.dict-filters .chip { white-space: nowrap; flex: 0 0 auto; }
+
+.dict-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.word-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 14px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; cursor: pointer;
+}
+.word-item:hover { border-color: color-mix(in oklab, var(--ink) 15%, var(--line)); }
+.word-item .lhs { flex: 1; min-width: 0; }
+.word-item .head { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.word-item .tr { font-size: 13px; color: var(--ink-2); margin-left: 4px; }
+.word-item .ex {
+  font-size: 12px; color: var(--ink-2); line-height: 1.4;
+  margin-top: 4px; font-style: italic;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.word-item .meta { font-size: 10px; color: var(--ink-3); letter-spacing: 0.02em; margin-top: 4px; }
+.word-item .badge {
+  flex: 0 0 auto; padding: 4px 8px; border-radius: 6px;
+  font-size: 10px; font-weight: 600; white-space: nowrap;
+}
+.dict-empty { padding: 4rem 1rem; text-align: center; color: var(--ink-2); font-size: 13px; }
+
+/* --- M16.5: catalog screen ------------------------------------------------- */
+.catalog { padding: 18px 22px 24px; }
+.catalog-h1 {
+  font-family: 'Geist', sans-serif;
+  font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 16px; color: var(--ink);
+}
+.catalog-chips {
+  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+  margin: 0 -18px 18px; padding: 0 18px 2px;
+}
+.catalog-chips::-webkit-scrollbar { display: none; }
+.catalog-chips .chip { flex: 0 0 auto; }
+.catalog-chips .chip.active { background: var(--ink); color: var(--bg); }
+.catalog-section { margin: 18px 0; }
+.catalog-section .uplabel { margin-bottom: 10px; }
+.catalog-row {
+  display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none;
+  margin: 0 -18px; padding: 0 18px 4px;
+}
+.catalog-row::-webkit-scrollbar { display: none; }
+.catalog-card {
+  flex: 0 0 auto; width: 110px;
+  display: flex; flex-direction: column; gap: 6px;
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+  text-align: left;
+}
+.catalog-card .cover {
+  width: 110px; border-radius: 6px;
+  padding: 9px 8px;
+}
+.catalog-card .cover .ct { font-size: 12px; line-height: 1.05; }
+.catalog-card .cover .ca { font-size: 7px; }
+.catalog-card-title {
+  font-size: 12px; font-weight: 600; color: var(--ink);
+  line-height: 1.2;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.catalog-card-meta {
+  font-size: 10px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.catalog-empty {
+  flex: 0 0 auto; padding: 24px 0; color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* --- M16.6: training screens (home + card + done). --------------------- */
+.learn-home { padding: 18px 22px 24px; }
+.learn-h1 {
+  font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+  color: var(--ink); margin: 2px 0 18px;
+}
+.daily-goal {
+  background: var(--soft); border-radius: 16px; padding: 18px;
+  margin-bottom: 22px;
+}
+.daily-goal-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.daily-goal-icon {
+  width: 32px; height: 32px; border-radius: 10px;
+  background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.daily-goal-icon svg { width: 18px; height: 18px; }
+.daily-goal-title { font-size: 14px; font-weight: 600; color: var(--ink); }
+.daily-goal-sub {
+  font-size: 11px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.learn-modes-label { margin-bottom: 10px; }
+
+/* --- M16.8: library streak card. --------------------------------------- */
+/* Lives between the library header and the grid. Softer background than
+   `.daily-goal` so it reads as a passive motivational chip rather than a
+   CTA; tighter padding matches the library-header rhythm. */
+.streak-card {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+.streak-card-icon {
+  width: 32px; height: 32px; border-radius: 10px;
+  background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.streak-card-icon svg { width: 18px; height: 18px; }
+.streak-card-text { min-width: 0; }
+.streak-card-title {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.streak-card-sub {
+  font-size: 11px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.mode-card {
+  width: 100%;
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px; margin-bottom: 10px;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 14px;
+  cursor: pointer; font-family: inherit; text-align: left;
+  transition: transform 120ms, border 0.15s;
+}
+.mode-card:hover { transform: translateY(-1px); border-color: color-mix(in oklab, var(--ink) 15%, var(--line)); }
+.mode-card-emoji {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: var(--soft);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px; flex: 0 0 auto;
+}
+.mode-card-text { flex: 1; min-width: 0; }
+.mode-card-title { font-size: 15px; font-weight: 600; color: var(--ink); }
+.mode-card-desc { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.mode-card-chev { color: var(--ink-2); display: inline-flex; align-items: center; }
+.mode-card-chev svg { width: 16px; height: 16px; }
+
+/* Learn card screen (MC session). */
+.learn-card-screen { padding: 14px 22px 24px; }
+.learn-empty {
+  min-height: 60vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px;
+  text-align: center;
+}
+.learn-empty-msg { font-size: 15px; color: var(--ink-2); }
+.learn-empty .btn { max-width: 240px; }
+
+.learn-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.learn-back { padding: 6px 10px; }
+.learn-back svg { width: 18px; height: 18px; }
+.learn-counter {
+  font-size: 12px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.learn-header-spacer { width: 34px; height: 34px; }
+
+.segments { display: flex; gap: 4px; margin-bottom: 20px; }
+.segments > div {
+  flex: 1; height: 3px; border-radius: 2px;
+  background: var(--line);
+}
+.segments > div.past { background: var(--accent); }
+.segments > div.current { background: var(--ink); }
+
+.learn-card {
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 20px; padding: 30px 20px 24px;
+  min-height: 260px;
+}
+.learn-card-prompt { text-align: center; }
+.learn-card-head {
+  margin-top: 16px; text-align: center;
+  font-size: 42px; line-height: 1; letter-spacing: -0.02em;
+  font-weight: 600; color: var(--ink);
+}
+.learn-card-ex {
+  margin-top: 22px; padding: 14px 16px; border-radius: 12px;
+  background: var(--soft);
+  font-size: 14px; line-height: 1.55; text-align: center;
+  color: var(--ink);
+}
+.learn-card-src {
+  margin-top: 8px; text-align: center;
+  font-size: 10px; color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+
+.mc-grid {
+  margin-top: 18px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.mc-option {
+  padding: 16px 14px; border-radius: 14px;
+  font-size: 15px; font-weight: 500; text-align: left;
+  background: var(--card); color: var(--ink);
+  border: 1.5px solid var(--line);
+  cursor: pointer; font-family: inherit;
+  transition: background 0.2s, border-color 0.2s;
+}
+.mc-option:disabled { cursor: default; }
+.mc-option.right {
+  background: color-mix(in oklab, #6b8a4a 25%, var(--card));
+  border-color: #6b8a4a;
+  color: var(--ink);
+}
+.mc-option.wrong {
+  background: color-mix(in oklab, var(--accent) 18%, var(--card));
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.learn-footer {
+  margin-top: 18px;
+  display: flex; justify-content: space-between;
+  font-size: 12px; color: var(--ink-2);
+}
+.learn-skip { cursor: pointer; }
+.learn-skip:hover { color: var(--ink); }
+
+/* Done screen. */
+.learn-done {
+  text-align: center; padding: 40px 20px 20px;
+}
+.learn-done-emoji { font-size: 56px; margin-bottom: 14px; }
+.learn-done-h1 {
+  margin: 0; font-size: 28px; font-weight: 600;
+  letter-spacing: -0.02em; color: var(--ink);
+}
+.learn-done-sub {
+  margin-top: 10px; font-size: 14px; color: var(--ink-2);
+}
+.learn-done-streak {
+  margin-top: 26px; padding: 16px; text-align: left;
+  background: var(--soft); border-radius: 16px;
+}
+.learn-done-streak-label {
+  font-size: 12px; color: var(--ink-2); margin-bottom: 4px;
+}
+.learn-done-streak-val {
+  font-size: 20px; font-weight: 600; color: var(--ink);
+}
+.learn-done-xp {
+  font-size: 11px; color: var(--ink-2); margin-top: 4px;
+}
+.learn-done-back { margin-top: 20px; }
+
+/* --- M16.7: flashcards (flip card) ------------------------------------ */
+.flashcard {
+  position: relative;
+  min-height: 280px;
+  perspective: 1200px;
+  margin-bottom: 18px;
+}
+.fc-front, .fc-back {
+  position: absolute; inset: 0;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 20px; padding: 36px 22px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transition: transform 0.5s cubic-bezier(.3, .9, .3, 1);
+}
+.fc-front { transform: rotateY(0deg); }
+.fc-back  { transform: rotateY(180deg); }
+.flashcard.flipped .fc-front { transform: rotateY(-180deg); }
+.flashcard.flipped .fc-back  { transform: rotateY(0deg); }
+.fc-headword {
+  margin: 0;
+  font-size: 42px; font-weight: 600;
+  letter-spacing: -0.02em; text-align: center;
+  color: var(--ink);
+}
+.fc-ipa {
+  font-size: 13px; color: var(--ink-2); font-style: italic;
+}
+.fc-example {
+  font-size: 14px; line-height: 1.55;
+  text-align: center; color: var(--ink);
+}
+.fc-source {
+  font-size: 10px; color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+.flash-actions { margin-top: 6px; }
+.flash-verdict-row { display: flex; gap: 10px; }
+
+/* Explicit reduced-motion override for the flip — the global
+   reduced-motion rule below already shortens transitions, but an
+   instant-toggle is kinder than even a 0.01 ms rotation under the
+   hardware-accelerated 3D transform. */
+@media (prefers-reduced-motion: reduce) {
+  .fc-front, .fc-back { transition: none !important; }
+}
+
+/* --- M17.2: screen-in fade from the prototype. Each top-level render
+   function adds `screen-in` to its root `<main>`; the class drives a
+   one-shot 180 ms slide+fade when the view first paints. Global
+   `prefers-reduced-motion` rule further down shortens this to 0.01ms. */
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.screen-in { animation: screen-in 0.18s ease-out; }
+
+/* --- M17.4: responsive breakpoints ---------------------------------------
+
+   Single responsive layout. The "phone-shell" markup in index.html is
+   kept only to preserve the DOM hierarchy the SPA was written against —
+   its decorative chrome (notch / statusbar / homebar / bordered frame)
+   is unconditionally hidden, because sticking a fake iPhone into the
+   middle of a desktop browser window is not actually a feature.
+
+     ≤ 480   — phone, full-bleed
+     481–900 — tablet / narrow desktop (main reading column centered)
+     ≥ 900   — wide desktop (wider grid, same centered column)
+   -------------------------------------------------------------------- */
+
+/* Always strip the phone-shell chrome. */
+body {
+  padding: 0; background: var(--bg);
+  display: block; align-items: stretch;
+}
+body.dark { background: var(--bg); }
+.stage { display: block; width: 100%; }
+.phone {
+  width: 100%; min-height: 100vh;
+  border-radius: 0; border: none; box-shadow: none;
+}
+.notch, .homebar, .statusbar { display: none; }
+.phone-body { display: block; }
+
+/* Tabbar pins to the viewport bottom — the shell is gone. */
+.tabbar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  max-width: 100%; margin-top: 0;
+  justify-content: center;
+}
+.tabbar .tab { max-width: 140px; flex: 1; }
+body.with-tabbar #root { padding-bottom: 82px; }
+
+/* Global content cap so a wide monitor doesn't stretch every line
+   from edge to edge. Each view re-tunes its own max-width below. */
+.phone-body > #root > main {
+  max-width: 920px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Sheet centers to a comfortable pop-up width on roomy viewports. */
+#sheet.sheet {
+  left: 50%; right: auto;
+  transform: translateX(-50%) translateY(100%);
+  width: 100%; max-width: 520px;
+}
+#sheet.sheet.show { transform: translateX(-50%) translateY(0); }
+#toast.toast { top: 16px; }
+
+/* Mobile overrides: tighter paddings, full-width sheet. */
+@media (max-width: 480px) {
+  .phone-body > #root > main { max-width: none; padding-inline: 0; }
+  #sheet.sheet {
+    left: 0; right: 0;
+    transform: translateY(100%);
+    max-width: 100%;
+  }
+  #sheet.sheet.show { transform: translateY(0); }
+  .tabbar { justify-content: space-between; }
+  .tabbar .tab { max-width: none; }
+}
+
+/* Tablet+ per-view caps. `.phone-body > #root > main` is our
+   specificity ceiling — we match it to override the global 920 px
+   cap with the per-view width each screen needs. */
+@media (min-width: 481px) {
+  /* Reader: typography-friendly column, never wider than 720 px. */
+  .phone-body > #root > main.reader { max-width: 720px; padding: 32px 32px 24px; }
+  .reader-header { max-width: 720px; margin-left: auto; margin-right: auto; }
+  /* Dictionary / learn / auth read best around 560 px. */
+  .phone-body > #root > main.dictionary,
+  .phone-body > #root > main.learn-home,
+  .phone-body > #root > main.learn-card-screen,
+  .phone-body > #root > main.auth-view {
+    max-width: 560px;
+  }
+  /* Catalog section rows stop being edge-bleed scrollers — they wrap
+     onto multiple lines so nothing leaks off-screen, and the cards
+     widen to a pleasing 140px grid. */
+  .catalog-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 16px 14px;
+    overflow-x: visible;
+    margin: 0; padding: 0;
+  }
+  .catalog-card { width: auto; }
+  .catalog-chips { overflow-x: visible; margin: 0 0 18px; padding: 0; flex-wrap: wrap; }
+  /* Library + book grid widens to fill the container. */
+  .grid { grid-template-columns: repeat(4, 1fr); gap: 16px; row-gap: 24px; }
+}
+
+@media (min-width: 720px) {
+  .grid { grid-template-columns: repeat(5, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .grid { grid-template-columns: repeat(6, 1fr); }
+}
+
+/* --- M16.1: accessibility — honor the user's reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

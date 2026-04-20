@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "en-reader"
+version = "0.1.0"
+description = "English reader with inline Russian translations for B1-C1 learners."
+requires-python = ">=3.11"
+dependencies = [
+    "spacy>=3.8,<3.9",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "fastapi>=0.115",
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pydantic>=2.8",
+    "google-genai>=1.0",
+    "python-dotenv>=1.0",
+    "bcrypt>=4.1",
+    "email-validator>=2.1",
+    "itsdangerous>=2.2",
+    "charset-normalizer>=3.3",
+    "lxml>=5.0",
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+# M15.7: `pip install -e ".[dev]"` pulls every tool needed to run the suite
+# locally and in CI (ruff + black + pytest family). Runtime installs skip
+# these — the production unit file runs `pip install -e .` without `[dev]`.
+dev = [
+    "pytest",
+    "pytest-cov>=4.1",
+    "pytest-playwright>=0.5",
+    "ruff",
+    "black",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
+
+[tool.coverage.run]
+source = ["src/en_reader"]
+omit = ["src/en_reader/static/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
