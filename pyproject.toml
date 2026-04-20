@@ -21,6 +21,8 @@ dependencies = [
     "itsdangerous>=2.2",
     "charset-normalizer>=3.3",
     "lxml>=5.0",
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12",
     "pytest",
     "ruff",
     "black",
