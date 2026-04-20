@@ -399,6 +399,37 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
+    """M18.4: add ``link_tokens`` — one-time tokens for the Telegram link flow.
+
+    An authenticated web user clicks "Привязать Telegram", we mint a
+    short-lived token, and send them to ``t.me/<bot>?start=link_<token>``.
+    The webhook handler consumes the token to know which local user is
+    asking to be linked to the ``from.id`` of the incoming message.
+
+    ``status`` transitions: ``pending`` → ``done|conflict|expired|failed``.
+    When status is ``conflict`` we store the chat/message id of the inline
+    keyboard we sent so a follow-up callback_query can edit it in place.
+    ``result`` is a short human-readable string the /auth/link/telegram/
+    status endpoint surfaces to the frontend poller.
+    """
+    conn.execute(
+        """
+        CREATE TABLE link_tokens (
+          token TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          other_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          chat_id INTEGER,
+          message_id INTEGER,
+          result TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX idx_link_tokens_user ON link_tokens(user_id)")
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
@@ -409,6 +440,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v6_to_v7,
     _migrate_v7_to_v8,
     _migrate_v8_to_v9,
+    _migrate_v9_to_v10,
 ]
 
 
@@ -1463,6 +1495,101 @@ def user_upsert_telegram(
             )
     uid = int(cur.lastrowid)
     return user_by_id(uid)  # type: ignore[return-value]
+
+
+# ---------- account linking / merging (M18.4) ----------
+
+
+def user_has_data(user_id: int) -> bool:
+    """True if ``user_id`` owns at least one dictionary word, book, progress row,
+    or training-activity row. Used by the link flow to skip the "whose data to
+    keep" prompt when one side is empty — auto-merging is safe then.
+    """
+    conn = get_db()
+    row = conn.execute(
+        """
+        SELECT
+          (SELECT 1 FROM user_dictionary WHERE user_id = ? LIMIT 1) AS ud,
+          (SELECT 1 FROM books           WHERE user_id = ? LIMIT 1) AS bk,
+          (SELECT 1 FROM reading_progress WHERE user_id = ? LIMIT 1) AS rp,
+          (SELECT 1 FROM daily_activity  WHERE user_id = ? LIMIT 1) AS da
+        """,
+        (user_id, user_id, user_id, user_id),
+    ).fetchone()
+    return any(row[k] is not None for k in ("ud", "bk", "rp", "da"))
+
+
+def user_merge(dest_id: int, src_id: int) -> None:
+    """Move every per-user row from ``src_id`` into ``dest_id`` and delete src.
+
+    All in one transaction:
+
+    * ``books`` reassigns outright (no UNIQUE on ``user_id``).
+    * ``user_dictionary`` uses UNIQUE(user_id, lemma) — drop src's duplicates
+      first so dest's already-trained version wins; then reassign the rest.
+    * ``reading_progress`` has UNIQUE(user_id, book_id), but ``book_id`` is
+      globally unique per row in ``books`` — no cross-conflicts possible
+      after the books move — so a blanket reassign is safe.
+    * ``daily_activity`` (UNIQUE(user_id, date)) drops src rows for days
+      dest already has (dest's counters stay), reassigns the rest.
+    * ``users.telegram_id`` must be released from src first (partial UNIQUE
+      index) before dest can claim it. ``current_book_id`` on dest falls
+      back to src's if dest didn't have one.
+    * Finally ``DELETE FROM users WHERE id = src`` — ``ON DELETE CASCADE``
+      picks up any link_tokens still pointing at src.
+
+    Caller holds the business-logic sanity — this function assumes the two
+    ids already passed the "should we merge?" checks and just does the
+    UPDATE / DELETE work.
+    """
+    conn = get_db()
+    with conn:  # single BEGIN/COMMIT
+        conn.execute(
+            "UPDATE books SET user_id = ? WHERE user_id = ?", (dest_id, src_id)
+        )
+        conn.execute(
+            "DELETE FROM user_dictionary WHERE user_id = ? AND lemma IN "
+            "(SELECT lemma FROM user_dictionary WHERE user_id = ?)",
+            (src_id, dest_id),
+        )
+        conn.execute(
+            "UPDATE user_dictionary SET user_id = ? WHERE user_id = ?",
+            (dest_id, src_id),
+        )
+        conn.execute(
+            "UPDATE reading_progress SET user_id = ? WHERE user_id = ?",
+            (dest_id, src_id),
+        )
+        conn.execute(
+            "DELETE FROM daily_activity WHERE user_id = ? AND date IN "
+            "(SELECT date FROM daily_activity WHERE user_id = ?)",
+            (src_id, dest_id),
+        )
+        conn.execute(
+            "UPDATE daily_activity SET user_id = ? WHERE user_id = ?",
+            (dest_id, src_id),
+        )
+        src_row = conn.execute(
+            "SELECT telegram_id, current_book_id FROM users WHERE id = ?",
+            (src_id,),
+        ).fetchone()
+        if src_row is None:
+            return  # src already gone — nothing to do
+        src_tg = src_row["telegram_id"]
+        src_cur_book = src_row["current_book_id"]
+        # Release UNIQUE on telegram_id before claiming it on dest.
+        conn.execute("UPDATE users SET telegram_id = NULL WHERE id = ?", (src_id,))
+        if src_tg is not None:
+            conn.execute(
+                "UPDATE users SET telegram_id = ? WHERE id = ?", (src_tg, dest_id)
+            )
+        if src_cur_book is not None:
+            conn.execute(
+                "UPDATE users SET current_book_id = ? WHERE id = ? "
+                "AND current_book_id IS NULL",
+                (src_cur_book, dest_id),
+            )
+        conn.execute("DELETE FROM users WHERE id = ?", (src_id,))
 
 
 # ---------- tiny aggregate helpers (M14.1) ----------
