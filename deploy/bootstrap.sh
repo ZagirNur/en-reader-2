@@ -25,7 +25,7 @@ fi
 # 1. Packages.
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  python3.11 python3.11-venv python3-pip git ufw ca-certificates curl gnupg
+  python3.11 python3.11-venv python3-pip git ufw ca-certificates curl gnupg rclone
 
 # 1a. Caddy (M13.4) for TLS termination + reverse proxy to :8080. Installed
 #     unconditionally; the bootstrap leaves /etc/caddy/Caddyfile untouched
@@ -95,12 +95,22 @@ install -m 0644 "$APP_HOME/deploy/en-reader-autopull.service" \
   /etc/systemd/system/en-reader-autopull.service
 install -m 0644 "$APP_HOME/deploy/en-reader-autopull.timer" \
   /etc/systemd/system/en-reader-autopull.timer
-chmod +x "$APP_HOME/deploy/autopull.sh"
+install -m 0644 "$APP_HOME/deploy/en-reader-backup.service" \
+  /etc/systemd/system/en-reader-backup.service
+install -m 0644 "$APP_HOME/deploy/en-reader-backup.timer" \
+  /etc/systemd/system/en-reader-backup.timer
+chmod +x "$APP_HOME/deploy/autopull.sh" \
+         "$APP_HOME/deploy/backup.sh" \
+         "$APP_HOME/deploy/restore.sh"
 systemctl daemon-reload
 systemctl enable en-reader
 systemctl restart en-reader
 systemctl enable en-reader-autopull.timer
 systemctl start en-reader-autopull.timer
+# Backup timer is enabled but only fires once rclone is configured — the
+# backup.sh script errors loudly on missing remote.
+systemctl enable en-reader-backup.timer
+systemctl start en-reader-backup.timer
 
 # 8. Firewall — SSH must go up BEFORE enabling ufw or we lock ourselves out.
 #    :80 + :443 are Caddy's responsibility; uvicorn stays on localhost:8080

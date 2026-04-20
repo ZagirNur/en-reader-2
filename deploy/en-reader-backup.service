@@ -1,0 +1,13 @@
+[Unit]
+Description=en-reader SQLite daily backup (M14.4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root so the VACUUM snapshot can be written to /tmp/ regardless
+# of permissions and rclone can read /root/.config/rclone/rclone.conf.
+# The snapshot itself drops privileges to the `enreader` user internally
+# so the service DB file is never read as root.
+User=root
+ExecStart=/opt/en-reader/deploy/backup.sh

@@ -163,7 +163,41 @@ journalctl -u caddy -n 50
 curl -v https://<domain>/    # check TLS handshake + headers
 ```
 
+## Backups (M14.4)
+
+Daily snapshot bundled as `tar(en-reader.db + .secret_key).gz` uploaded to
+an S3-compatible rclone remote. Retention 30 days. Timer fires at
+04:00 UTC daily with `Persistent=true`, so a VPS that was offline during
+the window catches up on boot.
+
+First-time setup on the VPS:
+
+```
+sudo rclone config
+# create a remote named "hetzner" (or whatever matches BACKUP_REMOTE env)
+# type: s3 → Hetzner Object Storage → paste access/secret key
+# bucket: en-reader-backups
+sudo systemctl start en-reader-backup.service   # test a manual run
+rclone ls hetzner:en-reader-backups/            # confirm the upload
+```
+
+Override via env (set in the service unit `Environment=` if needed):
+
+- `BACKUP_REMOTE` — default `hetzner:en-reader-backups`.
+- `BACKUP_RETENTION_DAYS` — default `30`.
+
+Restore (destructive — test on a fresh VM first):
+
+```
+sudo /opt/en-reader/deploy/restore.sh en-reader-2026-04-19T04-00-00Z.tar.gz
+# previous DB saved next to it as en-reader.db.before-restore-<ts>
+```
+
+`VACUUM INTO` is used for the snapshot so the live DB isn't blocked while
+the archive is written.
+
 ## Scope
 
-All deploy tasks from M13 (bootstrap, autopull, Telegram notify, TLS) are
-covered in this directory. Further hardening lands in M14.x.
+All deploy tasks from M13 (bootstrap, autopull, Telegram notify, TLS) plus
+M14.4 backups are covered here. Hardening inside the app (M14.1-M14.3) is
+Python-side; see the respective commits on branch `claude/initial-setup-0RVwz`.

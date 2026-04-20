@@ -1,0 +1,12 @@
+[Unit]
+Description=en-reader SQLite daily backup timer (M14.4)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+# If the VPS was powered off at 04:00, catch up on next boot so we never
+# skip more than a day without a snapshot.
+Persistent=true
+Unit=en-reader-backup.service
+
+[Install]
+WantedBy=timers.target
