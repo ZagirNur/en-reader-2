@@ -21,7 +21,7 @@ Coverage per spec §7:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -268,6 +268,60 @@ def test_record_training_result_unknown_lemma_is_noop() -> None:
     # No insert beforehand — function should silently succeed.
     storage.record_training_result("never-seen", correct=True)
     storage.record_training_result("never-seen", correct=False)
+
+
+def test_mastered_plus_wrong_demotes_to_review() -> None:
+    """Spec §3: mastered + wrong → review (not learning).
+
+    A word in ``mastered`` that the user misses is still mostly known — we
+    drop it to ``review`` with ``next_review_at=NOW()+1d`` rather than all
+    the way down to ``learning``.
+    """
+    storage.dict_add("ominous", "зловещий")
+    # Hand-promote to mastered so we don't depend on the internal streak
+    # arithmetic here.
+    conn = storage.get_db()
+    with conn:
+        conn.execute(
+            "UPDATE user_dictionary SET status='mastered', correct_streak=3 "
+            "WHERE lemma = 'ominous'"
+        )
+    storage.record_training_result("ominous", correct=False)
+    row = conn.execute(
+        "SELECT status, correct_streak, wrong_count "
+        "FROM user_dictionary WHERE lemma = 'ominous'"
+    ).fetchone()
+    assert row["status"] == "review"
+    assert row["correct_streak"] == 0
+    assert row["wrong_count"] == 1
+
+
+def test_mastered_staleness_demotes_to_review_on_pool_pick() -> None:
+    """Spec §3: a mastered word untouched for >30 days demotes to review.
+
+    We fold that sweep into ``pick_training_pool`` so no cron is needed;
+    the demotion only happens when the user is about to train anyway.
+    """
+    storage.dict_add("ominous", "зловещий")
+    # Pin last_reviewed_at to 45 days ago and status=mastered.
+    old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+    conn = storage.get_db()
+    with conn:
+        conn.execute(
+            "UPDATE user_dictionary SET status='mastered', correct_streak=3, "
+            "last_reviewed_at = ?, next_review_at = ? "
+            "WHERE lemma = 'ominous'",
+            (old, old),
+        )
+
+    # Picking the pool triggers the sweep.
+    storage.pick_training_pool(limit=10)
+
+    row = conn.execute(
+        "SELECT status, correct_streak FROM user_dictionary WHERE lemma = 'ominous'"
+    ).fetchone()
+    assert row["status"] == "review"
+    assert row["correct_streak"] == 0
 
 
 def test_training_result_api_returns_204(client: TestClient) -> None:

@@ -526,8 +526,15 @@ def record_training_result(
             new_status = "new"
             new_streak = 0
             next_review = (now + timedelta(days=1)).isoformat()
+        elif status == "mastered":
+            # Spec §3: mastered + wrong → review (not learning). The word is
+            # still "mostly known", just needs a nudge — skipping it all the
+            # way down to learning would kill the long-interval progress.
+            new_status = "review"
+            new_streak = 0
+            next_review = (now + timedelta(days=1)).isoformat()
         else:
-            # review / learning / mastered + wrong → back to learning.
+            # review / learning + wrong → back to learning.
             new_status = "learning"
             new_streak = 0
             next_review = (now + timedelta(days=1)).isoformat()
@@ -570,7 +577,22 @@ def pick_training_pool(
     if limit <= 0:
         return []
     conn = get_db()
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    # Spec §3: a ``mastered`` word that hasn't been touched in >30 days
+    # demotes back to ``review`` so it can re-enter the training pool.
+    # Folding this sweep into the pool pick keeps the rule alive without
+    # a separate cron; users only see the demotion when they open the
+    # training screen, which is exactly when it matters.
+    cutoff = (now - timedelta(days=30)).isoformat()
+    with conn:
+        conn.execute(
+            "UPDATE user_dictionary SET status = 'review', "
+            "next_review_at = ?, correct_streak = 0 "
+            "WHERE user_id = ? AND status = 'mastered' "
+            "AND last_reviewed_at IS NOT NULL AND last_reviewed_at <= ?",
+            (now_iso, user_id, cutoff),
+        )
     # Ranking via a CASE expression keeps us in a single query: lower
     # ``priority`` sorts first. ``next_review_at`` tiebreaks within a
     # tier; NULLs are pushed to the end so freshly-added words don't
