@@ -500,7 +500,7 @@ function renderLibrary() {
 
   root.innerHTML = "";
   const main = document.createElement("main");
-  main.className = "library";
+  main.className = "library screen-in";
 
   const header = document.createElement("header");
   header.className = "library-header";
@@ -1261,7 +1261,7 @@ function renderReader() {
   root.appendChild(header);
 
   const main = document.createElement("main");
-  main.className = "reader size-m reader-root";
+  main.className = "reader size-m reader-root screen-in";
 
   // M10.3: sentinels flank the rendered .page sections so two
   // IntersectionObservers can pre-fetch neighbors as the user approaches
@@ -1666,7 +1666,7 @@ function renderDictionary() {
 
   root.innerHTML = "";
   const main = document.createElement("main");
-  main.className = "dictionary";
+  main.className = "dictionary screen-in";
 
   // Header.
   const header = document.createElement("div");
@@ -2056,7 +2056,7 @@ function renderCatalog() {
 
   root.innerHTML = "";
   const main = document.createElement("main");
-  main.className = "catalog";
+  main.className = "catalog screen-in";
 
   const uplabel = document.createElement("div");
   uplabel.className = "uplabel";
@@ -2220,7 +2220,7 @@ function renderLearnHome() {
 
   root.innerHTML = "";
   const main = document.createElement("main");
-  main.className = "learn-home";
+  main.className = "learn-home screen-in";
 
   // M16.8: kick off the streak fetch on first entry. Same pattern as
   // the library card — re-renders on success, silently hides on
@@ -2361,7 +2361,7 @@ function renderLearnCard() {
   const pool = state.learn.pool;
   root.innerHTML = "";
   const main = document.createElement("main");
-  main.className = "learn-card-screen";
+  main.className = "learn-card-screen screen-in";
 
   // Empty-pool branch — no words to train, give the user a way back.
   if (pool.length === 0) {
@@ -2639,7 +2639,7 @@ function renderLearnFlash() {
   const pool = state.flash.pool;
   root.innerHTML = "";
   const main = document.createElement("main");
-  main.className = "learn-card-screen";
+  main.className = "learn-card-screen screen-in";
 
   // Empty-pool branch — no words to train, give the user a way back.
   if (pool.length === 0) {
@@ -2890,7 +2890,7 @@ function renderLogin() {
 
   const mode = state.authMode === "signup" ? "signup" : "login";
   const main = document.createElement("main");
-  main.className = "auth-view";
+  main.className = "auth-view screen-in";
 
   const h1 = document.createElement("h1");
   h1.id = "auth-title";

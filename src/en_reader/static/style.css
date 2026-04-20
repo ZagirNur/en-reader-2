@@ -821,6 +821,16 @@ body.with-tabbar #root { padding-bottom: 82px; }
   .fc-front, .fc-back { transition: none !important; }
 }
 
+/* --- M17.2: screen-in fade from the prototype. Each top-level render
+   function adds `screen-in` to its root `<main>`; the class drives a
+   one-shot 180 ms slide+fade when the view first paints. Global
+   `prefers-reduced-motion` rule further down shortens this to 0.01ms. */
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.screen-in { animation: screen-in 0.18s ease-out; }
+
 /* --- M17.1: mobile strips the phone shell so the app goes full-bleed. */
 @media (max-width: 480px) {
   body {
