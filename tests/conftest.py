@@ -67,21 +67,27 @@ def tmp_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_auth_ratelimit() -> None:
-    """Empty the auth rate-limit bucket between tests (M11.3).
+    """Empty every module-level rate-limit bucket between tests.
 
     The ``client`` fixture calls ``/auth/signup`` for every test that opts
     in, and the auth flow's sliding-window limiter maxes out at 10
     attempts per IP — so once we cross that threshold further signups
-    start returning 429 and the fixture blows up. The buckets are global
-    module state on ``auth_ratelimit``, so the cleanest fix is a global
-    autouse reset that matches the pattern ``test_auth.py`` already used
-    locally.
+    start returning 429 and the fixture blows up. M14.3 added two more
+    module-level limiters (``rl_translate``, ``rl_upload``) in
+    :mod:`en_reader.ratelimit`; we reset all three here so hits from one
+    test can't bleed into the next regardless of which route was
+    exercised.
     """
     from en_reader.auth import auth_ratelimit
+    from en_reader.ratelimit import rl_translate, rl_upload
 
     auth_ratelimit._hits.clear()
+    rl_translate.reset()
+    rl_upload.reset()
     yield
     auth_ratelimit._hits.clear()
+    rl_translate.reset()
+    rl_upload.reset()
 
 
 @pytest.fixture()

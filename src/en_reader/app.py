@@ -42,7 +42,22 @@ from en_reader.logs import get_ring, install as install_logging
 from en_reader.metrics import counters
 from en_reader.models import BookMeta, User
 from en_reader.parsers import UnsupportedFormatError, parse_book
+from en_reader.ratelimit import rl_translate, rl_upload
 from en_reader.translate import TranslateError, translate_one
+
+# Uvicorn ships a ``ProxyHeadersMiddleware`` that rewrites ``request.client``
+# from ``X-Forwarded-For`` / ``X-Real-IP`` when the request comes from a
+# trusted upstream. Behind Caddy (M13.4) the raw TCP peer is 127.0.0.1,
+# so without this middleware every auth rate-limit bucket would collapse
+# onto a single IP. Starlette has no equivalent module — if the import
+# ever fails (wheel slimmed, upstream rename) we fall back to not adding
+# it rather than crashing the whole app.
+try:
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    _HAS_PROXY_HEADERS = True
+except Exception:  # pragma: no cover - defensive fallback
+    _HAS_PROXY_HEADERS = False
 
 load_dotenv()
 
@@ -220,6 +235,14 @@ app.add_middleware(
     https_only=os.getenv("ENV") == "prod",
 )
 app.add_middleware(OriginCheckMiddleware)
+# ProxyHeadersMiddleware goes on *last* so, in the reverse-order inbound
+# dance, it runs **first** and ``request.client.host`` is already the real
+# client IP by the time OriginCheck / Session / routes see the request.
+# ``trusted_hosts="127.0.0.1"`` matches the Caddy→uvicorn hop from M13.4;
+# in test/dev with no upstream, the raw TCP peer is already 127.0.0.1 so
+# rewriting is a no-op and nothing breaks.
+if _HAS_PROXY_HEADERS:
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="127.0.0.1")
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
@@ -492,6 +515,14 @@ def translate(
     req: TranslateRequest,
     user: User = Depends(get_current_user),
 ) -> TranslateResponse:
+    # Rate-limit before any DB / Gemini work so a spamming client can't
+    # warm up the cache or burn the translation budget.
+    if not rl_translate.check(str(user.id)):
+        raise HTTPException(
+            status_code=429,
+            detail="slow down",
+            headers={"Retry-After": str(rl_translate.window)},
+        )
     cached = storage.dict_get(req.lemma, user_id=user.id)
     if cached:
         counters.translate_hit += 1
@@ -670,6 +701,16 @@ async def api_book_upload(
     log and return 500. Declared **before** the ``/{full_path:path}``
     catch-all so FastAPI's router matches this route first.
     """
+    # Rate-limit *before* the body read so a client hammering uploads
+    # can't force us to buffer hundreds of MB into memory just to
+    # reject them. 5 uploads / user / hour is generous for legitimate
+    # use and tight enough to shut a runaway script down fast.
+    if not rl_upload.check(str(user.id)):
+        raise HTTPException(
+            status_code=429,
+            detail="too many uploads today",
+            headers={"Retry-After": str(rl_upload.window)},
+        )
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="file too large (max 200 MB)")
