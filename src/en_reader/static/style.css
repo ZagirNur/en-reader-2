@@ -140,6 +140,17 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 }
 .card:hover { transform: translateY(-2px); transition: transform 120ms; }
 .card .cover-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 2rem; background: var(--bg); }
+.card img.cover { flex: 1; min-height: 0; width: 100%; object-fit: cover; display: block; }
+
+/* M12.4: deterministic gradient presets for books without a real cover. */
+.card .cover-placeholder.c-olive   { background: linear-gradient(135deg, #7a8a52, #4f5a32); color: rgba(255,255,255,0.85); }
+.card .cover-placeholder.c-clay    { background: linear-gradient(135deg, #c67a4a, #8a4a22); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-ink     { background: linear-gradient(135deg, #2a2a32, #0c0c0e); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-mauve   { background: linear-gradient(135deg, #9a6a8a, #5a3a52); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-mustard { background: linear-gradient(135deg, #d4b05a, #8f6a1e); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-sage    { background: linear-gradient(135deg, #8ab09a, #4e6e5e); color: rgba(255,255,255,0.9); }
+.card .cover-placeholder.c-rose    { background: linear-gradient(135deg, #d47a8a, #8a3a4a); color: rgba(255,255,255,0.9); }
+
 .card .meta { padding: 0.5rem 0.75rem; background: var(--card); }
 .card .title { font-weight: 600; font-size: 13px; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card .author { color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }

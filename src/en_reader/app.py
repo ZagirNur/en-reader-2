@@ -124,8 +124,14 @@ _COVER_PRESETS = ("olive", "clay", "ink", "mauve", "mustard", "sage", "rose")
 
 
 def _compute_cover_preset(book_id: int) -> str:
-    """Return ``c-<preset>`` for a given book id (deterministic)."""
-    return f"c-{_COVER_PRESETS[hash(str(book_id)) % len(_COVER_PRESETS)]}"
+    """Return ``c-<preset>`` for a given book id (deterministic).
+
+    Uses the raw id modulo the preset count so the same book always lands
+    on the same colour across server restarts. Python's built-in
+    ``hash(str(...))`` would salt per-process and shuffle the palette on
+    every redeploy, which breaks the "book recognized by colour" UX.
+    """
+    return f"c-{_COVER_PRESETS[book_id % len(_COVER_PRESETS)]}"
 
 
 # M12.4: hard cap on upload size. FastAPI / Starlette don't enforce a

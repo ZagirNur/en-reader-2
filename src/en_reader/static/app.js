@@ -371,10 +371,22 @@ function renderLibrary() {
       card.className = "card";
       card.dataset.bookId = String(b.id);
 
-      const cover = document.createElement("div");
-      cover.className = "cover-placeholder";
-      cover.textContent = "📖";
-      card.appendChild(cover);
+      // M12.4: if the book has a real cover on disk, serve it via
+      // `/api/books/<id>/cover`; otherwise fall back to the deterministic
+      // gradient preset (`c-olive`, `c-rose`, …) stamped on the server.
+      if (b.has_cover) {
+        const img = document.createElement("img");
+        img.className = "cover";
+        img.src = `/api/books/${encodeURIComponent(b.id)}/cover`;
+        img.alt = "";
+        card.appendChild(img);
+      } else {
+        const cover = document.createElement("div");
+        cover.className = "cover-placeholder";
+        if (b.cover_preset) cover.classList.add(b.cover_preset);
+        cover.textContent = "📖";
+        card.appendChild(cover);
+      }
 
       const meta = document.createElement("div");
       meta.className = "meta";
