@@ -111,9 +111,30 @@ sudo systemctl stop en-reader-autopull.timer
 sudo systemctl start en-reader-autopull.timer
 ```
 
+## Telegram notify (M13.3)
+
+Autopull pings Telegram after every real deploy. Set `TG_BOT_TOKEN` and
+`TG_CHAT_ID` in `/opt/en-reader/.env` (see `.env.example`); leave them
+empty to keep the notifier silent.
+
+Messages:
+
+- `deployed a1b2c3d4` — fast-forward succeeded and the service restarted.
+- `failed deploy at a1b2c3d4` — something after the SHA check raised under
+  `set -e` (pip install, systemd reload, restart). Fires exactly once per
+  broken deploy, never on no-op runs.
+
+Test manually:
+
+```
+sudo TG_BOT_TOKEN=... TG_CHAT_ID=... \
+  /opt/en-reader/deploy/notify.sh "hello from $(hostname)"
+```
+
+A curl timeout or missing creds are swallowed — notify never blocks
+autopull longer than 10 s and never fails the deploy on a Telegram outage.
+
 ## Scope
 
-- **M13.3** — Telegram notifications on deploy / crash (reads
-  `/tmp/en-reader-last-deploy.txt`).
 - **M13.4** — Let's Encrypt TLS termination in front of uvicorn (or on :443
   with the same capability trick).

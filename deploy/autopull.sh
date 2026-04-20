@@ -15,6 +15,22 @@ BRANCH="${BRANCH:-main}"
 LOCK_FILE="/tmp/en-reader-autopull.lock"
 LAST_DEPLOY_FILE="/tmp/en-reader-last-deploy.txt"
 
+# M13.3: Telegram notify. `_updating` flips to 1 only after we've seen a
+# real SHA change — so the ERR trap stays silent on pre-update failures
+# (e.g. flock contention, fetch against an unreachable origin), and only
+# fires when a deploy actually started.
+_updating=0
+
+notify_failure() {
+  if [ "$_updating" = "0" ]; then
+    return
+  fi
+  local sha
+  sha=$(cd "$APP_HOME" && sudo -u "$APP_USER" git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  "$APP_HOME/deploy/notify.sh" "failed deploy at $sha" || true
+}
+trap notify_failure ERR
+
 # 1. flock so slow pip installs don't overlap with the next tick.
 exec 200>"$LOCK_FILE"
 flock -n 200 || exit 0
@@ -31,6 +47,7 @@ if [ "$BEFORE" = "$AFTER" ]; then
   exit 0
 fi
 
+_updating=1
 echo "[autopull] updating from ${BEFORE:0:12} to ${AFTER:0:12}"
 
 # 3. Fast-forward only — if there are local edits on the VPS, fail loudly
@@ -65,6 +82,8 @@ fi
 # 6. Restart the app. Uvicorn downtime is a few seconds — acceptable on MVP.
 systemctl restart en-reader
 
-# 7. Record the new SHA so M13.3 can notify.
+# 7. Record the new SHA and ping Telegram on success.
 echo "$AFTER" > "$LAST_DEPLOY_FILE"
+SHORT_SHA=$(sudo -u "$APP_USER" git rev-parse --short HEAD)
 echo "[autopull] deployed $AFTER"
+"$APP_HOME/deploy/notify.sh" "deployed $SHORT_SHA" || true
