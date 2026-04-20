@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from en_reader import storage
+from en_reader import storage, tg
 from en_reader.auth import (
     auth_ratelimit,
     check_password,
@@ -128,10 +128,38 @@ def _secret_key() -> str:
 SECRET_KEY = _secret_key()
 
 
+# ---------- Telegram integration (M18.1) ----------
+
+# Bot token must NEVER be checked into the repo — only read from the
+# runtime environment (populated from /opt/en-reader/.env by systemd).
+_TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+# The webhook URL the bot POSTs updates to. PUBLIC_ORIGIN is set in
+# production (.env) to the Cloudflare-fronted domain so Telegram's
+# reverse DNS check passes.
+_PUBLIC_ORIGIN = os.environ.get("PUBLIC_ORIGIN", "").strip().rstrip("/")
+# Guard path so only Telegram can hit the webhook endpoint.
+_TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET") or secrets.token_urlsafe(32)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
-    """Run DB migrations on startup. No teardown work needed."""
+    """Run DB migrations on startup + register the Telegram webhook."""
     storage.migrate()
+    if _TELEGRAM_BOT_TOKEN and _PUBLIC_ORIGIN:
+        # Best-effort: failure here shouldn't block the app from coming up.
+        # Common cause of a failure is Telegram's rate-limit on repeated
+        # setWebhook calls during rapid autopull cycles; a retry on the
+        # next restart is fine.
+        try:
+            tg.set_webhook(
+                _TELEGRAM_BOT_TOKEN,
+                f"{_PUBLIC_ORIGIN}/tg/webhook",
+                secret_token=_TELEGRAM_WEBHOOK_SECRET,
+            )
+            tg.set_chat_menu_button(_TELEGRAM_BOT_TOKEN, _PUBLIC_ORIGIN)
+            logger.info("telegram webhook + menu button registered")
+        except Exception:
+            logger.exception("telegram setup failed (non-fatal)")
     yield
 
 
@@ -159,10 +187,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 # we still send both because some corporate proxies strip one or the other.
 _CSP = (
     "default-src 'self'; "
-    "img-src 'self' data:; "
+    "img-src 'self' data: https://t.me; "
     "connect-src 'self'; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "script-src 'self'; "
+    "script-src 'self' https://telegram.org; "
     "font-src 'self' https://fonts.gstatic.com; "
     "frame-ancestors 'none'"
 )
@@ -197,9 +225,7 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # start with ``http://138.201.153.242``. Configure the public URL(s)
 # via ``ALLOWED_ORIGINS`` (comma-separated, no trailing slash).
 _ALLOWED_ORIGINS = tuple(
-    o.strip().rstrip("/")
-    for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
-    if o.strip()
+    o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()
 )
 
 
@@ -867,6 +893,71 @@ def auth_login(cred: Credentials, request: Request) -> dict:
     request.session["user_id"] = user.id
     logger.info("user logged in: email=%s", user.email)
     return {"email": user.email}
+
+
+# ---------- Telegram Mini App auth + webhook (M18.1) ----------
+
+
+class TelegramAuthIn(BaseModel):
+    init_data: str = Field(min_length=1, max_length=8192)
+
+
+@app.post("/auth/telegram")
+def auth_telegram(p: TelegramAuthIn, request: Request) -> dict:
+    """Sign a Telegram Mini-App user into a session.
+
+    Expects ``init_data`` — the raw ``Telegram.WebApp.initData`` string
+    the client reads from its WebView. We HMAC-verify it (bot token is
+    the shared secret), map the Telegram user id to a local row via
+    ``user_upsert_telegram``, and stamp the session cookie the rest of
+    the /api/* routes already honour. 401 on any verification failure
+    — no leak about which step failed.
+    """
+    if not _TELEGRAM_BOT_TOKEN:
+        raise HTTPException(status_code=503, detail="telegram disabled")
+    if not auth_ratelimit.check(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="too many attempts")
+    try:
+        tg_user = tg.verify_init_data(p.init_data, _TELEGRAM_BOT_TOKEN)
+    except tg.InvalidInitDataError:
+        raise HTTPException(status_code=401, detail="invalid telegram init")
+    user = storage.user_upsert_telegram(tg_user.id, display_name=tg_user.first_name)
+    request.session["user_id"] = user.id
+    logger.info("telegram login: tg_id=%d user_id=%d", tg_user.id, user.id)
+    return {"email": user.email, "telegram_id": tg_user.id}
+
+
+@app.post("/tg/webhook")
+async def tg_webhook(request: Request) -> Response:
+    """Telegram → us update delivery. Only /start replies wire anything up.
+
+    We check ``X-Telegram-Bot-Api-Secret-Token`` against the secret we
+    registered at startup so a public URL can't be spammed with forged
+    updates. Anything we don't recognise is silently ACKed with 200
+    (Telegram retries on 5xx, which we don't want).
+    """
+    if not _TELEGRAM_BOT_TOKEN:
+        return Response(status_code=503)
+    supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if supplied != _TELEGRAM_WEBHOOK_SECRET:
+        # Silent 200 — don't confirm the URL to pokers, but don't 5xx
+        # either (Telegram would retry the legitimate update later).
+        return Response(status_code=200)
+    try:
+        update = await request.json()
+    except Exception:
+        return Response(status_code=200)
+    msg = update.get("message") or {}
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    text = (msg.get("text") or "").strip()
+    if chat_id and text.startswith("/start"):
+        webapp_url = _PUBLIC_ORIGIN or "https://enreader.zagirnur.dev"
+        try:
+            tg.send_start_reply(_TELEGRAM_BOT_TOKEN, int(chat_id), webapp_url)
+        except Exception:
+            logger.exception("send_start_reply failed")
+    return Response(status_code=200)
 
 
 @app.post("/auth/logout")

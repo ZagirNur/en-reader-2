@@ -79,11 +79,15 @@ class Page:
 
 @dataclass
 class User:
-    """A row from the ``users`` table (M11.1 / M11.2).
+    """A row from the ``users`` table (M11.1 / M11.2 / M18.1).
 
-    Holds the canonical lowercased ``email``, the bcrypt ``password_hash``
-    (or the ``__migration_placeholder__`` sentinel for the seed row), and
-    the per-user ``current_book_id`` pointer introduced in M11.1.
+    ``email`` is always set (synthetic ``tg-<id>@telegram.local`` for
+    Telegram-only accounts so we can keep the NOT NULL UNIQUE constraint).
+    ``password_hash`` is bcrypt for password users and the
+    ``__tg_no_password__`` sentinel for Telegram-only accounts — the login
+    handler rejects that sentinel so a Telegram-only user can never be
+    logged in via /auth/login. ``telegram_id`` (M18.1) holds the Telegram
+    user id for accounts created or linked through the Mini App.
     """
 
     id: int
@@ -91,6 +95,7 @@ class User:
     password_hash: str
     created_at: str
     current_book_id: int | None
+    telegram_id: int | None = None
 
 
 @dataclass

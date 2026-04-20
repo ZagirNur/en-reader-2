@@ -33,6 +33,12 @@ BCRYPT_MAX = 72
 # literal bytes happen to equal the sentinel.
 PLACEHOLDER_HASH = "__migration_placeholder__"
 
+# M18.1: sentinel for Telegram-only accounts. Same treatment as
+# PLACEHOLDER_HASH — any "password" the client sends rejects here, which
+# is exactly what we want: a Telegram-linked user can only log in via
+# /auth/telegram with a valid initData HMAC.
+TG_NO_PASSWORD_HASH = "__tg_no_password__"
+
 
 class EmailExistsError(Exception):
     """Raised by :func:`en_reader.storage.user_create` on UNIQUE violation."""
@@ -51,7 +57,7 @@ def check_password(password: str, hashed: str) -> bool:
     bcrypt exception (malformed hash, unexpected bytes) as ``False`` — the
     caller only cares about the boolean.
     """
-    if hashed == PLACEHOLDER_HASH:
+    if hashed == PLACEHOLDER_HASH or hashed == TG_NO_PASSWORD_HASH:
         return False
     pw = password.encode("utf-8")[:BCRYPT_MAX]
     try:

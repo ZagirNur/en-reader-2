@@ -379,6 +379,26 @@ def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX idx_daily_user_date ON daily_activity(user_id, date)")
 
 
+def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
+    """M18.1: add ``users.telegram_id`` for Telegram Mini-App auth.
+
+    Nullable because existing email/password accounts predate the column;
+    partial UNIQUE index keeps the 1:1 mapping between Telegram accounts
+    and rows without forbidding multiple ``NULL`` rows (legacy users).
+
+    SQLite supports partial indexes since 3.8.0 (WHERE clause), so this
+    migration runs the same on 22.04 and 24.04. ALTER TABLE ADD COLUMN
+    without a DEFAULT leaves existing rows at NULL, which is what we
+    want — an email/password user gets a telegram_id only after they
+    open the Mini-App and we link the accounts.
+    """
+    conn.execute("ALTER TABLE users ADD COLUMN telegram_id INTEGER")
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_users_telegram ON users(telegram_id) "
+        "WHERE telegram_id IS NOT NULL"
+    )
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
@@ -388,6 +408,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v5_to_v6,
     _migrate_v6_to_v7,
     _migrate_v7_to_v8,
+    _migrate_v8_to_v9,
 ]
 
 
@@ -1326,12 +1347,20 @@ def pages_load_slice(book_id: int, offset: int, limit: int) -> list[Page]:
 
 
 def _row_to_user(row: sqlite3.Row) -> User:
+    # M18.1: telegram_id is optional — schema_v<9 rows lack the column,
+    # so we defensively try/except the lookup instead of trusting
+    # ``row["telegram_id"]`` (which would KeyError on pre-v9 readers).
+    try:
+        tg = row["telegram_id"]
+    except (IndexError, KeyError):
+        tg = None
     return User(
         id=row["id"],
         email=row["email"],
         password_hash=row["password_hash"],
         created_at=row["created_at"],
         current_book_id=row["current_book_id"],
+        telegram_id=tg,
     )
 
 
@@ -1365,7 +1394,7 @@ def user_by_email(email: str) -> User | None:
     """Return the :class:`User` with this ``email`` or ``None``."""
     conn = get_db()
     cur = conn.execute(
-        "SELECT id, email, password_hash, created_at, current_book_id "
+        "SELECT id, email, password_hash, created_at, current_book_id, telegram_id "
         "FROM users WHERE email = ?",
         (email,),
     )
@@ -1377,11 +1406,63 @@ def user_by_id(user_id: int) -> User | None:
     """Return the :class:`User` with this ``id`` or ``None``."""
     conn = get_db()
     cur = conn.execute(
-        "SELECT id, email, password_hash, created_at, current_book_id " "FROM users WHERE id = ?",
+        "SELECT id, email, password_hash, created_at, current_book_id, telegram_id "
+        "FROM users WHERE id = ?",
         (user_id,),
     )
     row = cur.fetchone()
     return _row_to_user(row) if row else None
+
+
+def user_by_telegram(telegram_id: int) -> User | None:
+    """Return the user linked to ``telegram_id`` or None (M18.1)."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, email, password_hash, created_at, current_book_id, telegram_id "
+        "FROM users WHERE telegram_id = ?",
+        (telegram_id,),
+    ).fetchone()
+    return _row_to_user(row) if row else None
+
+
+def user_upsert_telegram(
+    telegram_id: int,
+    *,
+    display_name: str | None = None,
+) -> User:
+    """Return a :class:`User` for this Telegram id, creating it if absent.
+
+    Telegram-only accounts carry a synthetic ``tg-<id>@telegram.local``
+    email (the users.email column is NOT NULL UNIQUE from v5) and a
+    ``__tg_no_password__`` sentinel in ``password_hash``. The /auth/login
+    handler rejects that sentinel so the Mini-App user can't be logged
+    in with any password — only with a valid Telegram initData.
+    """
+    existing = user_by_telegram(telegram_id)
+    if existing is not None:
+        return existing
+    conn = get_db()
+    created_at = datetime.now(timezone.utc).isoformat()
+    email = f"tg-{telegram_id}@telegram.local"
+    # Collision path: someone could have already registered with this
+    # synthetic email (extremely unlikely, but guard anyway). Retry with
+    # a suffix on IntegrityError.
+    with conn:
+        try:
+            cur = conn.execute(
+                "INSERT INTO users(email, password_hash, created_at, telegram_id) "
+                "VALUES(?, ?, ?, ?)",
+                (email, "__tg_no_password__", created_at, telegram_id),
+            )
+        except sqlite3.IntegrityError:
+            email = f"tg-{telegram_id}-{int(datetime.now().timestamp())}@telegram.local"
+            cur = conn.execute(
+                "INSERT INTO users(email, password_hash, created_at, telegram_id) "
+                "VALUES(?, ?, ?, ?)",
+                (email, "__tg_no_password__", created_at, telegram_id),
+            )
+    uid = int(cur.lastrowid)
+    return user_by_id(uid)  # type: ignore[return-value]
 
 
 # ---------- tiny aggregate helpers (M14.1) ----------

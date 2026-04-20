@@ -3413,11 +3413,45 @@ window.addEventListener("popstate", onPopState);
 // /login or /signup still hit /auth/me but bypass the redirect, so a
 // signed-in visitor navigating there manually gets bounced home instead
 // of being shown the auth form they don't need.
+// M18.1: tell the Telegram WebView we've rendered + go full-height. Safe
+// no-op outside the WebView because `window.Telegram` is undefined there.
+function _telegramHandshake() {
+  const wa = window.Telegram && window.Telegram.WebApp;
+  if (!wa) return null;
+  try { wa.ready(); } catch (_e) {}
+  try { wa.expand(); } catch (_e) {}
+  return wa;
+}
+
+// M18.1: if we're opened inside Telegram and have valid initData, trade
+// it for a session cookie before the regular /auth/me probe fires. Any
+// failure (missing initData, 401 from the backend) falls through to the
+// normal flow — a user who opens the domain in a browser still lands on
+// the login/signup screen.
+async function _telegramAutoLogin() {
+  const wa = _telegramHandshake();
+  if (!wa || !wa.initData) return false;
+  try {
+    const res = await fetch("/auth/telegram", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ init_data: wa.initData }),
+    });
+    return res.ok;
+  } catch (_e) {
+    return false;
+  }
+}
+
 async function bootstrap() {
   setState({ view: "loading" });
 
   const path = location.pathname;
   const onAuthScreen = path === "/login" || path === "/signup";
+
+  // Try Telegram first — a successful exchange drops a session cookie so
+  // the following /auth/me comes back 200 and skips the login screen.
+  await _telegramAutoLogin();
 
   let authStatus = 0;
   let networkError = false;
