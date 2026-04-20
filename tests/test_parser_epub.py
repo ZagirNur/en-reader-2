@@ -234,3 +234,140 @@ def test_relative_parent_src_resolves() -> None:
     markers = re.findall(r"IMG[0-9a-f]{12}", pb.text)
     assert len(markers) == 1, f"expected one marker, got text={pb.text!r}"
     assert len(pb.images) == 1
+
+
+def test_epub_without_cover() -> None:
+    """EPUB with no cover set → ``parsed.cover is None``."""
+    book = epub.EpubBook()
+    book.set_identifier("no-cover")
+    book.set_title("No Cover")
+    book.set_language("en")
+    book.add_author("Jane Doe")
+
+    chap = epub.EpubHtml(title="Chapter 1", file_name="chap1.xhtml", lang="en")
+    chap.content = (
+        "<html xmlns='http://www.w3.org/1999/xhtml'>"
+        "<head><title>Chapter 1</title></head>"
+        "<body><p>Just text, no cover.</p></body></html>"
+    )
+    book.add_item(chap)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", chap]
+    book.toc = (chap,)
+
+    import io as _io
+
+    buf = _io.BytesIO()
+    epub.write_epub(buf, book)
+
+    pb = parse_epub(buf.getvalue(), "nocover.epub")
+    assert pb.cover is None
+    assert pb.images == []
+    assert "Just text" in pb.text
+
+
+def test_nested_img_yields_single_marker() -> None:
+    """<p><em><span><img/></span></em></p> → exactly one marker for that image.
+
+    The resolver descends into inline wrappers; the regression we're
+    guarding against is a duplicate marker (once from the wrapper's text
+    content, once from the re-inserted NavigableString).
+    """
+    book = epub.EpubBook()
+    book.set_identifier("nested-img")
+    book.set_title("Nested Img")
+    book.set_language("en")
+    book.add_author("Jane Doe")
+
+    img = epub.EpubImage(
+        uid="fig1",
+        file_name="images/fig1.png",
+        media_type="image/png",
+        content=_INLINE_PNG,
+    )
+    book.add_item(img)
+
+    chap = epub.EpubHtml(title="Chapter 1", file_name="chap1.xhtml", lang="en")
+    chap.content = (
+        "<html xmlns='http://www.w3.org/1999/xhtml'>"
+        "<head><title>Chapter 1</title></head>"
+        "<body>"
+        "<p>Before "
+        "<em><span><img src='images/fig1.png' alt='x'/></span></em>"
+        " after.</p>"
+        "</body></html>"
+    )
+    book.add_item(chap)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", chap]
+    book.toc = (chap,)
+
+    import io as _io
+
+    buf = _io.BytesIO()
+    epub.write_epub(buf, book)
+
+    pb = parse_epub(buf.getvalue(), "nested.epub")
+    markers = re.findall(r"IMG[0-9a-f]{12}", pb.text)
+    assert len(markers) == 1, f"expected one marker, got text={pb.text!r}"
+    assert len(pb.images) == 1
+
+
+def test_manifest_image_not_in_text_is_not_in_inline_images() -> None:
+    """Manifest image never referenced in any chapter → not in ``parsed.images``.
+
+    Only images that actually appear inline (as ``<img>`` in a spine-linked
+    chapter) are emitted; orphan manifest items must be ignored.
+    """
+    book = epub.EpubBook()
+    book.set_identifier("orphan")
+    book.set_title("Orphan Image")
+    book.set_language("en")
+    book.add_author("Jane Doe")
+
+    used = epub.EpubImage(
+        uid="used",
+        file_name="images/used.png",
+        media_type="image/png",
+        content=_INLINE_PNG,
+    )
+    orphan = epub.EpubImage(
+        uid="orphan",
+        file_name="images/orphan.png",
+        media_type="image/png",
+        content=_INLINE_PNG,
+    )
+    book.add_item(used)
+    book.add_item(orphan)
+
+    chap = epub.EpubHtml(title="Chapter 1", file_name="chap1.xhtml", lang="en")
+    chap.content = (
+        "<html xmlns='http://www.w3.org/1999/xhtml'>"
+        "<head><title>Chapter 1</title></head>"
+        "<body><p>See <img src='images/used.png' alt='u'/> here.</p></body>"
+        "</html>"
+    )
+    book.add_item(chap)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", chap]
+    book.toc = (chap,)
+
+    import io as _io
+
+    buf = _io.BytesIO()
+    epub.write_epub(buf, book)
+
+    pb = parse_epub(buf.getvalue(), "orphan.epub")
+    # Exactly one inline image, and it's the "used" one (bytes match, but
+    # more precisely: exactly one entry, not two).
+    assert len(pb.images) == 1
+    # Exactly one marker in text.
+    markers = re.findall(r"IMG[0-9a-f]{12}", pb.text)
+    assert len(markers) == 1
+    # The orphan image's id must not appear anywhere on the emitted
+    # inline-images list (structural invariant, not a byte check since
+    # both images share _INLINE_PNG content).
+    assert len({img.image_id for img in pb.images}) == 1

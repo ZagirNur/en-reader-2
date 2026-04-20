@@ -114,3 +114,116 @@ def test_missing_title_falls_back_to_filename() -> None:
 def test_empty_author_is_none() -> None:
     pb = parse_fb2(_build_fb2(include_author=False), "sample.fb2")
     assert pb.author is None
+
+
+def test_missing_title_info_uses_filename() -> None:
+    """FB2 with no <title-info> block → title falls back to filename stem."""
+    png_b64 = base64.b64encode(_PNG_BYTES).decode("ascii")
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"'
+        ' xmlns:l="http://www.w3.org/1999/xlink">'
+        "<description></description>"
+        "<body><section><p>Hello.</p></section></body>"
+        f'<binary id="x" content-type="image/png">{png_b64}</binary>'
+        "</FictionBook>"
+    )
+    pb = parse_fb2(xml.encode("utf-8"), "anna_karenina.fb2")
+    assert pb.title == Path("anna_karenina.fb2").stem
+    assert pb.title == "anna_karenina"
+
+
+def test_no_coverpage_means_none_cover() -> None:
+    """FB2 without <coverpage> → cover is None."""
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"'
+        ' xmlns:l="http://www.w3.org/1999/xlink">'
+        "<description><title-info>"
+        "<book-title>Coverless</book-title>"
+        "<lang>en</lang>"
+        "</title-info></description>"
+        "<body><section><p>Some text.</p></section></body>"
+        "</FictionBook>"
+    )
+    pb = parse_fb2(xml.encode("utf-8"), "coverless.fb2")
+    assert pb.cover is None
+
+
+def test_cover_in_body_is_deduped() -> None:
+    """Cover binary ALSO referenced inline in a <p> → cover extracted, no marker in text.
+
+    We build an FB2 where ``cov`` is the coverpage binary AND the body has
+    a ``<p>`` with ``<image l:href="#cov"/>``. The parser must:
+
+    1. Extract the cover into ``ParsedBook.cover`` (non-None).
+    2. Suppress the marker in body text (so the cover isn't rendered
+       twice — once as a hero image and once inline).
+    """
+    png_b64 = base64.b64encode(_PNG_BYTES).decode("ascii")
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"'
+        ' xmlns:l="http://www.w3.org/1999/xlink">'
+        "<description><title-info>"
+        "<book-title>Dup</book-title>"
+        '<coverpage><image l:href="#cov"/></coverpage>'
+        "<lang>en</lang>"
+        "</title-info></description>"
+        "<body><section>"
+        '<p>Look at this: <image l:href="#cov"/> — same image as the cover.</p>'
+        "</section></body>"
+        f'<binary id="cov" content-type="image/png">{png_b64}</binary>'
+        "</FictionBook>"
+    )
+    pb = parse_fb2(xml.encode("utf-8"), "dup.fb2")
+    assert pb.cover is not None
+    assert pb.cover.data == _PNG_BYTES
+    # Cover marker must NOT leak into body.
+    assert f"IMG{pb.cover.image_id}" not in pb.text
+    # And no OTHER marker either — the in-body reference to the cover
+    # binary is suppressed, not re-encoded as a fresh inline image.
+    assert not re.findall(r"IMG[0-9a-f]{12}", pb.text)
+    assert pb.images == []
+
+
+def test_dangling_image_ref_is_ignored() -> None:
+    """<image l:href="#missing"/> with no matching <binary> → no crash, no marker."""
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"'
+        ' xmlns:l="http://www.w3.org/1999/xlink">'
+        "<description><title-info>"
+        "<book-title>Dangling</book-title>"
+        "<lang>en</lang>"
+        "</title-info></description>"
+        "<body><section>"
+        '<p>Before <image l:href="#missing"/> after.</p>'
+        "</section></body>"
+        "</FictionBook>"
+    )
+    pb = parse_fb2(xml.encode("utf-8"), "dangling.fb2")
+    assert not re.findall(r"IMG[0-9a-f]{12}", pb.text)
+    assert pb.images == []
+    # Surrounding text survived.
+    assert "Before" in pb.text
+    assert "after" in pb.text
+
+
+def test_multi_author_joined_with_comma() -> None:
+    """Two <author> blocks → ``author`` joined with ", "."""
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"'
+        ' xmlns:l="http://www.w3.org/1999/xlink">'
+        "<description><title-info>"
+        "<book-title>Two Authors</book-title>"
+        "<author><first-name>Alice</first-name><last-name>A</last-name></author>"
+        "<author><first-name>Bob</first-name><last-name>B</last-name></author>"
+        "<lang>en</lang>"
+        "</title-info></description>"
+        "<body><section><p>Hi.</p></section></body>"
+        "</FictionBook>"
+    )
+    pb = parse_fb2(xml.encode("utf-8"), "two.fb2")
+    assert pb.author == "Alice A, Bob B"
