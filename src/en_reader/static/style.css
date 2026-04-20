@@ -216,3 +216,34 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
   width: 0%;
   transition: width 200ms;
 }
+
+/* --- Login / signup (M11.3) --- */
+.auth-view { max-width: 360px; margin: 5rem auto; padding: 2rem; text-align: center; }
+.auth-view h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 1.5rem; color: var(--ink); }
+.auth-view form { display: flex; flex-direction: column; gap: 0.75rem; }
+.auth-view input {
+  width: 100%; padding: 12px 14px; font-size: 15px; font: inherit;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card); color: var(--ink);
+  box-sizing: border-box;
+}
+.auth-view button[type="submit"] {
+  padding: 12px 14px; font: inherit; font-weight: 500;
+  border: none; border-radius: 12px;
+  background: var(--ink); color: var(--bg); cursor: pointer;
+}
+.auth-view .auth-switch {
+  background: transparent; border: none; padding: 0.5rem;
+  color: var(--ink-2); font: inherit; cursor: pointer;
+  text-decoration: underline;
+  margin-top: 0.5rem;
+}
+.auth-view .error { color: var(--accent); margin-top: 0.5rem; min-height: 1.2em; }
+
+.library-header-right { display: flex; align-items: center; gap: 0.5rem; }
+.logout-btn {
+  background: transparent; border: none; cursor: pointer;
+  font-size: 1rem; color: var(--ink-2); padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+.logout-btn:hover { color: var(--ink); background: var(--bg-2); }

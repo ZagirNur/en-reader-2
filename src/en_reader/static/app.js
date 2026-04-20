@@ -18,6 +18,11 @@ const state = {
   targetPageIndex: 0,
   targetOffset: 0,
   restoring: false,
+  // Auth (M11.3). `authMode` toggles between login + signup on the /login
+  // screen; it resets to "login" on every page load (nothing persisted).
+  // `authError` renders a user-friendly message under the form.
+  authMode: "login",
+  authError: null,
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -122,6 +127,10 @@ function parseRoute(path) {
   if (path === "/") return { view: "library" };
   // Legacy back-compat: /reader → first seeded book.
   if (path === "/reader") return { view: "reader", bookId: 1 };
+  // M11.3: both /login and /signup render the same auth screen; the
+  // signup/login toggle is driven by state.authMode so both paths map to
+  // a single view and the UI switch button is the canonical mode driver.
+  if (path === "/login" || path === "/signup") return { view: "login" };
   const m = BOOK_ROUTE_RE.exec(path);
   if (m) return { view: "reader", bookId: Number(m[1]) };
   return { view: "error" };
@@ -273,11 +282,33 @@ function renderLibrary() {
   header.className = "library-header";
   const h1 = document.createElement("h1");
   h1.textContent = "Моя полка";
+  const headerRight = document.createElement("div");
+  headerRight.className = "library-header-right";
   const avatar = document.createElement("div");
   avatar.className = "avatar";
   avatar.textContent = "E";
+  // M11.3: logout button lives to the right of the avatar. On click we
+  // fire-and-forget the logout POST (treating a failure as "session is
+  // gone anyway") and navigate to /login so bootstrap never re-runs
+  // against a now-dead session cookie.
+  const logoutBtn = document.createElement("button");
+  logoutBtn.type = "button";
+  logoutBtn.className = "logout-btn";
+  logoutBtn.title = "Выйти";
+  logoutBtn.setAttribute("aria-label", "Выйти");
+  logoutBtn.textContent = "Выйти";
+  logoutBtn.addEventListener("click", async () => {
+    try {
+      await apiPost("/auth/logout", {});
+    } catch (_e) {
+      // Logout failures are ignored — we're navigating to /login either way.
+    }
+    navigate("/login");
+  });
+  headerRight.appendChild(avatar);
+  headerRight.appendChild(logoutBtn);
   header.appendChild(h1);
-  header.appendChild(avatar);
+  header.appendChild(headerRight);
   main.appendChild(header);
 
   const grid = document.createElement("div");
@@ -1243,6 +1274,112 @@ function renderError() {
   root.append(box, p);
 }
 
+// --- login / signup (M11.3) ---
+// Map HTTP status codes to user-friendly Russian error messages. Anything
+// unexpected (network failure, 5xx, missing status) lands on the fallback.
+function authErrorMessage(status, mode) {
+  if (status === 401) return "Неверный email или пароль";
+  if (status === 409) return "Этот email уже зарегистрирован";
+  if (status === 422) return "Пароль слишком короткий (≥ 8 символов)";
+  if (status === 400) return "Некорректный email";
+  if (status === 429) return "Слишком много попыток, попробуйте позже";
+  return mode === "signup"
+    ? "Ошибка регистрации. Попробуйте ещё раз"
+    : "Ошибка входа. Попробуйте ещё раз";
+}
+
+function renderLogin() {
+  const root = document.getElementById("root");
+  root.innerHTML = "";
+
+  const mode = state.authMode === "signup" ? "signup" : "login";
+  const main = document.createElement("main");
+  main.className = "auth-view";
+
+  const h1 = document.createElement("h1");
+  h1.id = "auth-title";
+  h1.textContent = mode === "signup" ? "Регистрация" : "Войти";
+  main.appendChild(h1);
+
+  const form = document.createElement("form");
+  form.id = "auth-form";
+
+  const emailInput = document.createElement("input");
+  emailInput.type = "email";
+  emailInput.name = "email";
+  emailInput.required = true;
+  emailInput.placeholder = "email";
+  emailInput.autocomplete = "email";
+  form.appendChild(emailInput);
+
+  const passwordInput = document.createElement("input");
+  passwordInput.type = "password";
+  passwordInput.name = "password";
+  passwordInput.required = true;
+  passwordInput.minLength = 8;
+  passwordInput.placeholder = "пароль (≥ 8)";
+  passwordInput.autocomplete =
+    mode === "signup" ? "new-password" : "current-password";
+  form.appendChild(passwordInput);
+
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = mode === "signup" ? "Зарегистрироваться" : "Войти";
+  form.appendChild(submit);
+
+  const errBox = document.createElement("div");
+  errBox.id = "auth-error";
+  errBox.className = "error";
+  // XSS discipline: authError always flows through textContent only.
+  if (state.authError) errBox.textContent = state.authError;
+  form.appendChild(errBox);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+    submit.disabled = true;
+    try {
+      const path = mode === "signup" ? "/auth/signup" : "/auth/login";
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        setState({ authError: authErrorMessage(res.status, mode) });
+        return;
+      }
+      // Success: session cookie is set. Navigate home — the library view
+      // will fetch books; current-book redirection only fires on full
+      // bootstraps, which is fine (the user is one click away anyway).
+      state.authError = null;
+      navigate("/");
+    } catch (_err) {
+      setState({ authError: authErrorMessage(0, mode) });
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  main.appendChild(form);
+
+  const switchBtn = document.createElement("button");
+  switchBtn.id = "auth-switch";
+  switchBtn.type = "button";
+  switchBtn.className = "auth-switch";
+  switchBtn.textContent =
+    mode === "signup" ? "Уже есть аккаунт? Войти" : "Зарегистрироваться";
+  switchBtn.addEventListener("click", () => {
+    setState({
+      authMode: mode === "signup" ? "login" : "signup",
+      authError: null,
+    });
+  });
+  main.appendChild(switchBtn);
+
+  root.appendChild(main);
+}
+
 // --- inline translation (M4.2) ---
 function getSentenceFor(span) {
   const sentEl = span.closest("[data-sentence-id]");
@@ -1487,6 +1624,7 @@ function render() {
   switch (state.view) {
     case "library": return renderLibrary();
     case "reader": return renderReader();
+    case "login": return renderLogin();
     case "loading": return renderLoading();
     case "error": return renderError();
     default: return renderError();
@@ -1501,29 +1639,66 @@ function render() {
 }
 window.addEventListener("popstate", onPopState);
 
-// M10.5: on boot, consult the server for a current-book pointer. If there
-// is one and the user is landing on `/`, redirect straight into the reader
-// so closing and re-opening the tab resumes exactly where they left off.
-// Direct links like `/books/5` always win — we never override an explicit
-// path. A failed `/api/me/current-book` call is treated as "no pointer" so
-// a backend outage still produces a working library view.
+// M11.3 + M10.5: on boot we probe /auth/me first to distinguish
+// 200 (authenticated — continue with the current-book redirect),
+// 401 (no session — redirect to /login unless we're already there),
+// and network/5xx (show a "Нет соединения" screen rather than loop the
+// user through /login on every backend outage). Direct landings on
+// /login or /signup still hit /auth/me but bypass the redirect, so a
+// signed-in visitor navigating there manually gets bounced home instead
+// of being shown the auth form they don't need.
 async function bootstrap() {
   setState({ view: "loading" });
+
+  const path = location.pathname;
+  const onAuthScreen = path === "/login" || path === "/signup";
+
+  let authStatus = 0;
+  let networkError = false;
+  try {
+    const res = await fetch("/auth/me");
+    authStatus = res.status;
+  } catch (_e) {
+    networkError = true;
+  }
+
+  if (networkError || authStatus >= 500) {
+    setState({ view: "error", error: "Нет соединения" });
+    return;
+  }
+  if (authStatus === 401) {
+    if (!onAuthScreen) {
+      navigate("/login");
+      return;
+    }
+    setState({ route: path, view: "login" });
+    return;
+  }
+  if (authStatus !== 200) {
+    setState({ view: "error", error: "Нет соединения" });
+    return;
+  }
+  if (onAuthScreen) {
+    navigate("/");
+    return;
+  }
+
+  // Authenticated: consult the current-book pointer so re-opening the
+  // tab lands directly in the reader. Fetch failures are swallowed —
+  // we just fall through to the library.
   let bookId = null;
   try {
     const data = await apiGet("/api/me/current-book");
     if (data && data.book_id != null) bookId = data.book_id;
-  } catch (_e) {
-    // Treat fetch failure as "no current book" — fall through to normal routing.
-  }
+  } catch (_e) { /* no pointer */ }
   if (bookId && location.pathname === "/") {
     navigate(`/books/${bookId}`);
     return;
   }
-  const path = location.pathname;
-  const { view } = parseRoute(path);
-  const patch = { route: path, view };
-  if (view === "error") patch.error = `Unknown route: ${path}`;
+  const finalPath = location.pathname;
+  const { view } = parseRoute(finalPath);
+  const patch = { route: finalPath, view };
+  if (view === "error") patch.error = `Unknown route: ${finalPath}`;
   setState(patch);
 }
 bootstrap();
