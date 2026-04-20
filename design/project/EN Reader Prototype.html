@@ -1,0 +1,1114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>EN Reader — Prototype</title>
+<template id="__bundler_thumbnail" data-bg-color="#f6f4ef">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#f6f4ef"/>
+    <g transform="translate(420,180)">
+      <rect x="0" y="0" width="360" height="440" rx="16" fill="#14141a"/>
+      <rect x="40" y="60" width="280" height="18" rx="4" fill="#e85d2c"/>
+      <rect x="40" y="108" width="220" height="12" rx="3" fill="#ebebef" opacity="0.7"/>
+      <rect x="40" y="140" width="260" height="12" rx="3" fill="#ebebef" opacity="0.5"/>
+      <rect x="40" y="172" width="180" height="12" rx="3" fill="#ebebef" opacity="0.5"/>
+      <rect x="40" y="230" width="90" height="90" rx="8" fill="#e85d2c"/>
+      <rect x="150" y="230" width="170" height="18" rx="4" fill="#ebebef"/>
+      <rect x="150" y="258" width="130" height="12" rx="3" fill="#9a9aa5"/>
+      <rect x="40" y="360" width="280" height="44" rx="22" fill="#e85d2c"/>
+    </g>
+    <text x="600" y="700" text-anchor="middle" font-family="sans-serif" font-size="28" font-weight="600" fill="#14141a">EN Reader</text>
+  </svg>
+</template>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Instrument+Serif&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #f6f4ef; --bg-2: #ecebe5; --card: #ffffff;
+    --ink: #14141a; --ink-2: #5c5c66; --ink-3: #9a9aa5;
+    --line: #e1dfd5; --accent: #e85d2c; --accent-2: #ff7a45;
+    --soft: #ecebe5;
+  }
+  .dark {
+    --bg: #0e0e10; --bg-2: #17171a; --card: #17171a;
+    --ink: #ebebef; --ink-2: #9a9aa5; --ink-3: #5c5c66;
+    --line: #27272e; --accent: #ff7a45; --accent-2: #ffa88a;
+    --soft: #1f1f24;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: 'Geist', system-ui, -apple-system, sans-serif;
+    background: #d8d3c7;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 32px 16px;
+    transition: background 0.3s;
+  }
+  body.dark { background: #1a1a1e; }
+
+  /* frame */
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+
+  .theme-toggle {
+    position: fixed; top: 20px; right: 20px; z-index: 100;
+    display: flex; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 4px; gap: 2px;
+    box-shadow: 0 8px 24px -10px rgba(0,0,0,0.15);
+  }
+  .theme-toggle button {
+    border: none; background: none; padding: 8px 14px; border-radius: 999px;
+    font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    color: var(--ink-2);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .theme-toggle button.on { background: var(--ink); color: var(--bg); }
+
+  /* phone */
+  .phone {
+    width: 390px; height: 800px;
+    border-radius: 48px;
+    background: var(--bg);
+    color: var(--ink);
+    border: 8px solid #000;
+    box-shadow: 0 28px 56px -20px rgba(0,0,0,0.35), 0 10px 24px rgba(0,0,0,0.15);
+    overflow: hidden; position: relative;
+    display: flex; flex-direction: column;
+    transition: background 0.3s, color 0.3s;
+  }
+  .notch {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 120px; height: 28px; background: #000; border-radius: 18px; z-index: 60;
+  }
+  .statusbar {
+    height: 46px; padding: 14px 28px 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    font-size: 14px; font-weight: 600; flex-shrink: 0; color: var(--ink);
+  }
+  .homebar {
+    position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+    width: 130px; height: 4px; border-radius: 2px;
+    background: var(--ink); opacity: 0.45; z-index: 55;
+  }
+  .body { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+  .scroll::-webkit-scrollbar { width: 0; }
+
+  /* tab bar */
+  .tabbar {
+    display: flex; padding: 8px 10px 30px;
+    background: color-mix(in oklab, var(--bg) 88%, transparent);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  .tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 8px 0; cursor: pointer; position: relative;
+    font-size: 10px; font-weight: 500; color: var(--ink-3);
+    background: none; border: none;
+    font-family: inherit;
+    transition: color 0.15s;
+  }
+  .tab.on { color: var(--ink); }
+  .tab.on .tab-dot {
+    position: absolute; bottom: -8px; width: 4px; height: 4px;
+    border-radius: 50%; background: var(--accent);
+  }
+  .tab svg { width: 22px; height: 22px; }
+
+  /* buttons + chips */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 14px 20px; border-radius: 12px;
+    font-family: inherit; font-size: 15px; font-weight: 600;
+    border: none; cursor: pointer; transition: transform 0.08s, background 0.15s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--ink); color: var(--bg); }
+  .btn.accent { background: var(--accent); color: #fff; }
+  .btn.ghost { background: var(--bg-2); color: var(--ink); }
+  .btn.full { width: 100%; }
+  .btn.sm { padding: 10px 14px; font-size: 13px; border-radius: 10px; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 8px;
+    font-size: 12px; font-weight: 500;
+    background: var(--bg-2); color: var(--ink-2);
+    border: 1px solid transparent; cursor: pointer;
+    font-family: inherit;
+  }
+  .chip.on { background: var(--ink); color: var(--bg); }
+  .chip .n { opacity: 0.5; font-weight: 400; margin-left: 2px; }
+
+  /* covers */
+  .cover {
+    aspect-ratio: 2/3; border-radius: 6px; overflow: hidden;
+    position: relative; display: flex; flex-direction: column;
+    padding: 12px 10px; color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06), 0 10px 24px -14px rgba(0,0,0,0.3);
+  }
+  .cover::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.1), transparent 30%, rgba(0,0,0,0.18));
+    pointer-events: none;
+  }
+  .cover .ct {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 16px; line-height: 1.05; font-weight: 400; letter-spacing: -0.01em;
+  }
+  .cover .ca {
+    margin-top: auto;
+    font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.78;
+    font-weight: 500;
+  }
+  .cover.c-olive   { background: linear-gradient(150deg, #6a7a42, #3d4826); }
+  .cover.c-clay    { background: linear-gradient(150deg, #c85a38, #7a2a18); }
+  .cover.c-ink     { background: linear-gradient(150deg, #2a3342, #0f141c); }
+  .cover.c-mauve   { background: linear-gradient(150deg, #8c5a6b, #4a2a35); }
+  .cover.c-mustard { background: linear-gradient(150deg, #c9a253, #7a5a1c); color: #14141a; }
+  .cover.c-mustard .ca { color: #14141a; }
+  .cover.c-sage    { background: linear-gradient(150deg, #8a9a6c, #4a5836); }
+  .cover.c-rose    { background: linear-gradient(150deg, #c8685a, #6f2e24); }
+  .dark .cover.c-olive   { background: linear-gradient(150deg, #3a4424, #1d2212); }
+  .dark .cover.c-clay    { background: linear-gradient(150deg, #b85a38, #5a2612); }
+  .dark .cover.c-ink     { background: linear-gradient(150deg, #303a4c, #0a0d14); }
+  .dark .cover.c-mauve   { background: linear-gradient(150deg, #6f4658, #3a2530); }
+  .dark .cover.c-mustard { background: linear-gradient(150deg, #c9a253, #5a4418); }
+  .dark .cover.c-sage    { background: linear-gradient(150deg, #6b7d5a, #3a4632); }
+  .dark .cover.c-rose    { background: linear-gradient(150deg, #a85c4c, #5a2a20); }
+
+  /* translated word pill */
+  .word {
+    cursor: pointer;
+    padding: 0 2px; border-radius: 3px;
+    transition: background 0.15s;
+  }
+  .word.translated {
+    background: color-mix(in oklab, var(--accent) 15%, transparent);
+    color: var(--accent);
+    border-bottom: 1px solid var(--accent);
+    font-weight: 500;
+  }
+  .word.highlighted {
+    background: color-mix(in oklab, var(--accent) 25%, transparent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* display font in this theme = Geist (editorial). Instrument Serif used sparingly for big numbers / covers */
+  h1, h2, h3 { font-family: 'Geist', sans-serif; }
+  .serif { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+
+  .uplabel {
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-2); font-weight: 500;
+  }
+
+  /* sheet / popup */
+  .scrim {
+    position: absolute; inset: 0; z-index: 90;
+    background: rgba(0,0,0,0.32);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 100;
+    background: var(--card);
+    border-top-left-radius: 28px; border-top-right-radius: 28px;
+    padding: 16px 22px 28px;
+    transform: translateY(100%); transition: transform 0.28s cubic-bezier(.2,.9,.3,1);
+    box-shadow: 0 -20px 40px -14px rgba(0,0,0,0.35);
+  }
+  .sheet.show { transform: translateY(0); }
+  .sheet .handle {
+    width: 40px; height: 4px; border-radius: 2px; background: var(--line);
+    margin: 0 auto 16px;
+  }
+
+  /* card */
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+
+  /* progress bar */
+  .pbar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .pbar > i { display: block; height: 100%; background: var(--accent); }
+
+  /* toast */
+  .toast {
+    position: absolute; top: 60px; left: 50%; transform: translate(-50%, -20px);
+    background: var(--ink); color: var(--bg);
+    padding: 10px 16px; border-radius: 999px;
+    font-size: 13px; font-weight: 500;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 150;
+    box-shadow: 0 10px 24px -8px rgba(0,0,0,0.3);
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* fade-in for screens */
+  @keyframes screen-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .screen-in { animation: screen-in 0.18s ease-out; }
+
+  @media (max-width: 480px) {
+    body { padding: 0; align-items: stretch; background: var(--bg); }
+    body.dark { background: var(--bg); }
+    .phone { width: 100%; height: 100vh; border-radius: 0; border: none; box-shadow: none; }
+    .notch { display: none; }
+    .homebar { display: none; }
+    .statusbar { display: none; }
+    .theme-toggle { top: 10px; right: 10px; }
+  }
+</style>
+</head>
+<body>
+  <div class="theme-toggle" id="themeToggle">
+    <button data-mode="light" class="on"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg> Light</button>
+    <button data-mode="dark"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg> Dark</button>
+  </div>
+
+  <div class="stage">
+    <div class="phone" id="phone">
+      <div class="notch"></div>
+      <div class="statusbar" id="statusbar">
+        <span>9:41</span>
+        <span style="display:inline-flex;gap:6px;align-items:center">
+          <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M1 10V7h2v3H1zm4 0V5h2v5H5zm4 0V3h2v7H9zm4 0V1h2v9h-2z"/></svg>
+          <svg width="24" height="11" viewBox="0 0 24 11" fill="none"><rect x="0.5" y="0.5" width="20" height="10" rx="2.5" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="14" height="7" rx="1.2" fill="currentColor"/><rect x="21" y="3.5" width="1.5" height="4" rx="0.5" fill="currentColor" opacity="0.4"/></svg>
+        </span>
+      </div>
+      <div class="body" id="body">
+        <div id="root" style="flex:1; display:flex; flex-direction:column; overflow:hidden;"></div>
+        <div class="scrim" id="scrim"></div>
+        <div class="sheet" id="sheet"></div>
+        <div class="toast" id="toast">В словарь ✓</div>
+      </div>
+      <div id="tabbarSlot"></div>
+      <div class="homebar"></div>
+    </div>
+  </div>
+
+  <script>
+  // ─────────── Data ───────────
+  const LIBRARY = [
+    { id: 'gatsby',   t: 'The Great Gatsby',  a: 'F. Scott Fitzgerald', lvl: 'B2', prog: 0.42, color: 'c-olive' },
+    { id: '1984',     t: '1984',              a: 'George Orwell',       lvl: 'B2', prog: 0.18, color: 'c-ink' },
+    { id: 'pride',    t: 'Pride & Prejudice', a: 'Jane Austen',         lvl: 'C1', prog: 0.68, color: 'c-mauve' },
+    { id: 'hobbit',   t: 'The Hobbit',        a: 'J.R.R. Tolkien',      lvl: 'B1', prog: 0.05, color: 'c-mustard' },
+    { id: 'alchemist',t: 'The Alchemist',     a: 'Paulo Coelho',        lvl: 'B1', prog: 0.91, color: 'c-sage' },
+    { id: 'murakami', t: 'Norwegian Wood',    a: 'Haruki Murakami',     lvl: 'C1', prog: 0.00, color: 'c-rose' },
+  ];
+
+  const CATALOG = [
+    { k: 'По твоему уровню', items: [
+      { id: 'c1', t: 'Animal Farm',            a: 'George Orwell',     lvl: 'B1', pages: 112, color: 'c-sage' },
+      { id: 'c2', t: 'Of Mice and Men',        a: 'John Steinbeck',    lvl: 'B2', pages: 107, color: 'c-clay' },
+      { id: 'c3', t: 'The Old Man & the Sea',  a: 'E. Hemingway',      lvl: 'B2', pages: 127, color: 'c-ink' },
+      { id: 'c4', t: 'Fahrenheit 451',         a: 'Ray Bradbury',      lvl: 'B2', pages: 158, color: 'c-clay' },
+    ]},
+    { k: 'Короткое — за выходные', items: [
+      { id: 'd1', t: 'Flowers for Algernon',   a: 'Daniel Keyes',      lvl: 'B2', pages: 30,  color: 'c-mauve' },
+      { id: 'd2', t: 'The Yellow Wallpaper',   a: 'C. P. Gilman',      lvl: 'B2', pages: 18,  color: 'c-mustard' },
+      { id: 'd3', t: 'The Lottery',            a: 'Shirley Jackson',   lvl: 'B1', pages: 12,  color: 'c-olive' },
+    ]},
+  ];
+
+  // text is an array of paragraphs. Each paragraph is an array of tokens.
+  // token: string (plain) | {w, ru} translatable word
+  const GATSBY_PAGE = [
+    [
+      'In my younger and more ',
+      { w: 'vulnerable', ru: 'уязвимые' },
+      ' years my father gave me some ',
+      { w: 'advice', ru: 'советы' },
+      ' that I\'ve been ',
+      { w: 'turning', ru: 'прокручиваю' },
+      ' over in my mind ever since.'
+    ],
+    [
+      '"Whenever you feel like ',
+      { w: 'criticizing', ru: 'критиковать' },
+      ' any one," he told me, "just remember that all the people in this world haven\'t had the ',
+      { w: 'advantages', ru: 'преимущества' },
+      ' that you\'ve had."'
+    ],
+    [
+      'He didn\'t say any more, but we\'ve always been unusually ',
+      { w: 'communicative', ru: 'общительными' },
+      ' in a ',
+      { w: 'reserved', ru: 'сдержанной' },
+      ' way, and I understood that he meant a great deal more than that.'
+    ],
+    [
+      'In ',
+      { w: 'consequence', ru: 'результате' },
+      ', I\'m ',
+      { w: 'inclined', ru: 'склонен' },
+      ' to reserve all ',
+      { w: 'judgments', ru: 'суждения' },
+      ', a habit that has opened up many ',
+      { w: 'curious', ru: 'любопытных' },
+      ' natures to me.'
+    ],
+  ];
+
+  const WORD_INFO = {
+    vulnerable: { ipa: '/ˈvʌln(ə)rəb(ə)l/', pos: 'прил.', ru: 'уязвимый, ранимый' },
+    advice:     { ipa: '/ədˈvaɪs/',        pos: 'сущ.',  ru: 'совет' },
+    turning:    { ipa: '/ˈtɜːnɪŋ/',        pos: 'гл.',   ru: 'прокручивать, обдумывать' },
+    criticizing:{ ipa: '/ˈkrɪtɪsaɪzɪŋ/',   pos: 'гл.',   ru: 'критиковать' },
+    advantages: { ipa: '/ədˈvɑːntɪdʒɪz/',  pos: 'сущ.',  ru: 'преимущества' },
+    communicative:{ ipa: '/kəˈmjuːnɪkətɪv/', pos: 'прил.', ru: 'общительный, открытый' },
+    reserved:   { ipa: '/rɪˈzɜːvd/',       pos: 'прил.', ru: 'сдержанный, замкнутый' },
+    consequence:{ ipa: '/ˈkɒnsɪkwəns/',    pos: 'сущ.',  ru: 'следствие, результат' },
+    inclined:   { ipa: '/ɪnˈklaɪnd/',      pos: 'прил.', ru: 'склонный' },
+    judgments:  { ipa: '/ˈdʒʌdʒmənts/',    pos: 'сущ.',  ru: 'суждения' },
+    curious:    { ipa: '/ˈkjʊəriəs/',      pos: 'прил.', ru: 'любопытный, необычный' },
+  };
+
+  // ─────────── State ───────────
+  const S = {
+    tab: 'lib',
+    screen: 'lib',     // 'lib' | 'cat' | 'dict' | 'learn' | 'reader' | 'learnCard'
+    dark: false,
+    // translated words in current book (set of lowercase word keys)
+    translated: new Set(),
+    // saved words (array of {w, ru, ipa, pos, ex, src})
+    saved: [
+      { w: 'solitude',  ru: 'уединение',      ex: 'he relished the solitude of dawn',    src: 'Norwegian Wood',   lvl: 'learning', d: 3, ipa:'/ˈsɒlɪtjuːd/', pos:'сущ.' },
+      { w: 'quaint',    ru: 'причудливый',    ex: 'a quaint old village by the sea',     src: 'Pride & Prejudice', lvl: 'mastered', d: 20, ipa:'/kweɪnt/', pos:'прил.' },
+      { w: 'grasp',     ru: 'ухватить(ся)',   ex: 'he could not grasp her meaning',      src: 'The Great Gatsby', lvl: 'learning', d: 5, ipa:'/ɡrɑːsp/', pos:'гл.' },
+      { w: 'ember',     ru: 'уголёк',         ex: 'a single ember glowed in the ash',    src: 'The Hobbit',       lvl: 'new',      d: 1, ipa:'/ˈembər/', pos:'сущ.' },
+      { w: 'linger',    ru: 'задерживаться',  ex: 'the scent lingered in the room',      src: '1984',             lvl: 'review',   d: 0, ipa:'/ˈlɪŋɡə/', pos:'гл.' },
+    ],
+    learn: { idx: 0, correct: 0, done: false, feedback: null }, // feedback: null | 'ok' | 'wrong'
+    dictFilter: 'all',
+    sheetContent: null,
+    sheetOpen: false,
+    toast: null,
+    highlightWord: null, // word to flash in reader after "translate all"
+  };
+
+  // ─────────── Icons ───────────
+  const I = {
+    books: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V4H6.5A2.5 2.5 0 0 0 4 6.5v13Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 22H20v-5"/></svg>',
+    compass:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5.5-5.5 2 2-5.5 5.5-2Z"/></svg>',
+    dict:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4V4Z"/><path d="M4 16a4 4 0 0 1 4-4h11"/></svg>',
+    brain:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-2 2.8V13a3 3 0 0 0 2 2.8V17a3 3 0 0 0 3 3h.5V4H9Z"/><path d="M15 4a3 3 0 0 1 3 3v1a3 3 0 0 1 2 2.8V13a3 3 0 0 1-2 2.8V17a3 3 0 0 1-3 3h-.5V4H15Z"/></svg>',
+    plus:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+    chevL:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>',
+    chevR:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+    star:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.9 6.2 20.95l1.1-6.5L2.6 9.85l6.5-.95L12 3Z"/></svg>',
+    undo:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11a6 6 0 0 1 0 12H8"/><path d="m7 3-4 4 4 4"/></svg>',
+    settings:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10"/><path d="M4 12h6"/><path d="M4 17h12"/><circle cx="18" cy="7" r="2"/><circle cx="14" cy="12" r="2"/><circle cx="20" cy="17" r="2"/></svg>',
+    x:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    fire:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1.5 3 3.5 4.5 3.5 7.5 0 2-1.5 3.5-3.5 3.5-1 0-2-.5-2-2 0-1 .5-1.5.5-2.5-2 1-3.5 3-3.5 5.5 0 3 2.5 5.5 5.5 5.5s5.5-2.5 5.5-5.5c0-5-3-7-6-12Z"/></svg>',
+    trend:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 5-5 4 4 8-8"/><path d="M15 8h5v5"/></svg>',
+    check:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12 5 5 11-11"/></svg>',
+  };
+
+  // ─────────── Render helpers ───────────
+  const $ = (id) => document.getElementById(id);
+  const h = (tag, attrs = {}, ...kids) => {
+    const el = document.createElement(tag);
+    for (const k in attrs) {
+      if (k === 'class') el.className = attrs[k];
+      else if (k === 'html') el.innerHTML = attrs[k];
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), attrs[k]);
+      else if (k === 'style' && typeof attrs[k] === 'object') Object.assign(el.style, attrs[k]);
+      else el.setAttribute(k, attrs[k]);
+    }
+    for (const kid of kids.flat()) {
+      if (kid == null || kid === false) continue;
+      el.append(kid.nodeType ? kid : document.createTextNode(kid));
+    }
+    return el;
+  };
+
+  function showToast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => t.classList.remove('show'), 1600);
+  }
+
+  function openSheet(content) {
+    const sheet = $('sheet');
+    sheet.innerHTML = '';
+    sheet.append(h('div', { class: 'handle' }));
+    sheet.append(content);
+    requestAnimationFrame(() => {
+      $('scrim').classList.add('show');
+      sheet.classList.add('show');
+    });
+  }
+  function closeSheet() {
+    $('scrim').classList.remove('show');
+    $('sheet').classList.remove('show');
+  }
+  $('scrim')?.addEventListener('click', closeSheet);
+
+  // ─────────── Screens ───────────
+  function TabBar() {
+    const tabs = [
+      { id: 'lib',   label: 'Мои книги', ic: I.books },
+      { id: 'cat',   label: 'Каталог',   ic: I.compass },
+      { id: 'dict',  label: 'Словарь',   ic: I.dict },
+      { id: 'learn', label: 'Учить',     ic: I.brain },
+    ];
+    const bar = h('div', { class: 'tabbar' });
+    tabs.forEach(t => {
+      const b = h('button', {
+        class: 'tab' + (S.tab === t.id ? ' on' : ''),
+        onclick: () => { S.tab = t.id; S.screen = t.id; render(); }
+      });
+      b.innerHTML = t.ic + `<span>${t.label}</span>` + (S.tab === t.id ? '<span class="tab-dot"></span>' : '');
+      bar.append(b);
+    });
+    return bar;
+  }
+
+  // LIBRARY
+  function ScreenLibrary() {
+    const root = h('div', { class: 'scroll screen-in' });
+    const continuing = LIBRARY[0];
+    const others = LIBRARY.slice(1);
+
+    // header
+    root.append(h('div', { style: { padding: '18px 22px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' } },
+      h('div', {},
+        h('div', { class: 'uplabel', style: { marginBottom: '2px' } }, 'Вторник · 9:41'),
+        h('h1', { style: { margin: 0, fontSize: '30px', letterSpacing: '-0.02em', fontWeight: 600 } }, 'Моя полка')
+      ),
+      h('div', { style: { width: '38px', height: '38px', borderRadius: '20px', background: 'var(--card)', border: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600 } }, 'М')
+    ));
+
+    // streak
+    const streak = h('div', { class: 'card', style: { margin: '6px 22px 18px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--soft)', border: 'none' } });
+    streak.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;background:var(--accent);color:#fff">${I.fire.replace('<svg', '<svg width="18" height="18"')}</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600">7 дней подряд</div>
+        <div style="font-size:11px;color:var(--ink-2)">8 слов сегодня · 42 за неделю</div>
+      </div>
+      <div style="font-size:11px;color:var(--ink-2);display:inline-flex;gap:4px;align-items:center">+12 ${I.trend.replace('<svg', '<svg width="12" height="12"')}</div>
+    `;
+    root.append(streak);
+
+    // continue
+    const contBlock = h('div', { style: { padding: '0 22px 18px' } });
+    contBlock.append(h('div', { class: 'uplabel', style: { marginBottom: '10px' } }, 'Продолжить чтение'));
+    const contCard = h('div', { class: 'card', style: { display: 'flex', gap: '14px', padding: '12px', borderRadius: '18px', cursor: 'pointer' }, onclick: () => { S.screen = 'reader'; render(); } });
+    const cover = h('div', { class: `cover ${continuing.color}`, style: { width: '86px', flexShrink: 0 } });
+    cover.innerHTML = `<div class="ct">${continuing.t}</div><div class="ca">${continuing.a.split(' ').slice(-1)[0]}</div>`;
+    contCard.append(cover);
+    const info = h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 } },
+      h('div', { style: { fontSize: '19px', lineHeight: 1.15, letterSpacing: '-0.01em', fontWeight: 600, marginTop: '2px' } }, continuing.t),
+      h('div', { style: { fontSize: '12px', color: 'var(--ink-2)', marginTop: '2px' } }, continuing.a),
+      h('div', { style: { marginTop: '12px', display: 'flex', gap: '10px', fontSize: '11px', color: 'var(--ink-2)' } },
+        h('span', {}, 'гл. 3'), h('span', {}, '·'), h('span', {}, `${Math.round(continuing.prog*100)} % прочитано`)
+      ),
+      (() => {
+        const bar = h('div', { class: 'pbar', style: { marginTop: '8px' } });
+        bar.innerHTML = `<i style="width:${continuing.prog*100}%"></i>`;
+        return bar;
+      })(),
+      (() => {
+        const btn = h('button', { class: 'btn primary sm', style: { marginTop: '12px', alignSelf: 'flex-start' }, onclick: (e) => { e.stopPropagation(); S.screen = 'reader'; render(); } });
+        btn.innerHTML = `Читать дальше ${I.chevR.replace('<svg', '<svg width="14" height="14"')}`;
+        return btn;
+      })()
+    );
+    contCard.append(info);
+    contBlock.append(contCard);
+    root.append(contBlock);
+
+    // shelf
+    root.append(h('div', { style: { padding: '0 22px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      h('div', { class: 'uplabel' }, 'Библиотека'),
+      h('div', { style: { fontSize: '11px', color: 'var(--ink-2)' } }, `${LIBRARY.length} книг`)
+    ));
+
+    const grid = h('div', { style: { padding: '0 22px 24px', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '14px', rowGap: '22px' } });
+    others.forEach(b => {
+      const cell = h('div', { style: { cursor: 'pointer' }, onclick: () => { showToast('Открываем ' + b.t); } });
+      const cov = h('div', { class: `cover ${b.color}`, style: { padding: '8px 7px' } });
+      cov.innerHTML = `<div class="ct" style="font-size:12px;line-height:1.05">${b.t}</div><div class="ca" style="font-size:7px">${b.a.split(' ').slice(-1)[0]}</div>`;
+      cell.append(cov);
+      const meta = h('div', { style: { marginTop: '6px' } });
+      meta.innerHTML = `
+        <div style="font-size:11px;font-weight:600;color:var(--ink);line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.t}</div>
+        <div style="font-size:10px;color:var(--ink-2);margin-top:2px;display:flex;justify-content:space-between">
+          <span>${b.lvl}</span><span>${Math.round(b.prog*100)}%</span>
+        </div>
+        <div class="pbar" style="margin-top:4px;height:2px"><i style="width:${b.prog*100}%"></i></div>
+      `;
+      cell.append(meta);
+      grid.append(cell);
+    });
+    root.append(grid);
+
+    return root;
+  }
+
+  // CATALOG
+  function ScreenCatalog() {
+    const root = h('div', { class: 'scroll screen-in', style: { padding: '18px 22px 24px' } });
+    root.append(h('div', { class: 'uplabel', style: { marginBottom: '2px' } }, 'Каталог'));
+    root.append(h('h1', { style: { margin: 0, fontSize: '30px', letterSpacing: '-0.02em', fontWeight: 600 } }, 'Что почитать'));
+
+    // filter chips
+    const chips = h('div', { style: { margin: '16px 0', display: 'flex', gap: '8px', flexWrap: 'wrap' } });
+    ['A1', 'A2', 'B1', 'B2', 'C1'].forEach((lv, i) => {
+      chips.append(h('span', { class: 'chip' + (i === 2 ? ' on' : '') }, lv));
+    });
+    root.append(chips);
+
+    CATALOG.forEach(sec => {
+      root.append(h('div', { class: 'uplabel', style: { marginTop: '18px', marginBottom: '10px' } }, sec.k));
+      const row = h('div', { style: { display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '8px', margin: '0 -22px', padding: '0 22px 8px' } });
+      sec.items.forEach(b => {
+        const cell = h('div', { style: { width: '110px', flexShrink: 0, cursor: 'pointer' }, onclick: () => showToast(b.t + ' добавлено') });
+        const cov = h('div', { class: `cover ${b.color}`, style: { padding: '9px 8px' } });
+        cov.innerHTML = `<div class="ct" style="font-size:12px;line-height:1.05">${b.t}</div><div class="ca" style="font-size:7px">${b.a.split(' ').slice(-1)[0]}</div>`;
+        cell.append(cov);
+        cell.innerHTML += `
+          <div style="margin-top:6px;font-size:11px;font-weight:600;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.t}</div>
+          <div style="font-size:10px;color:var(--ink-2);margin-top:2px">${b.lvl} · ${b.pages} стр.</div>
+        `;
+        row.append(cell);
+      });
+      root.append(row);
+    });
+    return root;
+  }
+
+  // READER
+  function ScreenReader() {
+    const wrap = h('div', { class: 'screen-in', style: { display: 'flex', flexDirection: 'column', height: '100%' } });
+
+    // top chrome
+    const top = h('div', { style: { padding: '4px 14px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', flexShrink: 0 } });
+    const back = h('button', { class: 'btn ghost sm', style: { padding: '8px', background: 'transparent' }, onclick: () => { S.screen = 'lib'; S.tab = 'lib'; render(); } });
+    back.innerHTML = I.chevL.replace('<svg', '<svg width="22" height="22"');
+    const mid = h('div', { style: { textAlign: 'center' } });
+    mid.innerHTML = `
+      <div style="font-size:12px;font-weight:600">The Great Gatsby</div>
+      <div style="font-size:10px;color:var(--ink-2);margin-top:1px">Глава 1 · стр. 7 из 182</div>
+    `;
+    const gear = h('button', { class: 'btn ghost sm', style: { padding: '8px', background: 'transparent' }, onclick: openReaderSettings });
+    gear.innerHTML = I.settings.replace('<svg', '<svg width="22" height="22"');
+    top.append(back, mid, gear);
+    wrap.append(top);
+
+    // body
+    const body = h('div', { class: 'scroll', style: { padding: '26px 26px 16px' } });
+    body.append(h('div', { class: 'uplabel', style: { marginBottom: '14px' } }, 'Chapter One'));
+
+    const article = h('div', { style: { fontSize: '17px', lineHeight: 1.65, color: 'var(--ink)', textWrap: 'pretty' } });
+    GATSBY_PAGE.forEach((para, pi) => {
+      const p = h('p', { style: { margin: '0 0 14px' } });
+      para.forEach((tok, ti) => {
+        if (typeof tok === 'string') {
+          p.append(document.createTextNode(tok));
+        } else {
+          const isTr = S.translated.has(tok.w);
+          const isHi = S.highlightWord === tok.w;
+          const span = h('span', {
+            class: 'word' + (isTr ? ' translated' : '') + (isHi ? ' highlighted' : ''),
+            onclick: (e) => { e.stopPropagation(); onWordTap(tok); }
+          }, isTr ? tok.ru : tok.w);
+          p.append(span);
+        }
+      });
+      article.append(p);
+    });
+    body.append(article);
+
+    body.append(h('div', { style: { marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', color: 'var(--ink-2)' } },
+      h('span', {}, '42 % · ~18 мин до конца главы'),
+      h('span', { html: `${I.star.replace('<svg', '<svg width="12" height="12" style=\'vertical-align:-2px;margin-right:4px\'')} ${S.translated.size} новых слов` })
+    ));
+
+    wrap.append(body);
+
+    // bottom progress
+    const pb = h('div', { style: { padding: '10px 22px 14px', borderTop: '1px solid var(--line)', flexShrink: 0 } });
+    pb.innerHTML = `<div class="pbar"><i style="width:42%"></i></div>`;
+    wrap.append(pb);
+
+    return wrap;
+  }
+
+  // Handle tapping a word in the reader:
+  // - if untranslated: translate all instances + show popup with "Отменить" + "В словарь"
+  // - if already translated: show popup with "↩ Оригинал" + "В словарь"
+  function onWordTap(tok) {
+    const wasTranslated = S.translated.has(tok.w);
+    if (!wasTranslated) {
+      S.translated.add(tok.w);
+      S.highlightWord = tok.w;
+      renderReaderOnly();
+      setTimeout(() => { S.highlightWord = null; renderReaderOnly(); }, 800);
+    }
+    openWordPopup(tok, wasTranslated);
+  }
+
+  function openWordPopup(tok, wasAlreadyTranslated) {
+    const info = WORD_INFO[tok.w] || { ipa: '—', pos: '', ru: tok.ru };
+    const saved = S.saved.some(s => s.w === tok.w);
+
+    const sheet = h('div', {});
+    // headword
+    const head = h('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' } });
+    head.append(h('div', {},
+      h('div', { style: { fontSize: '34px', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' } }, tok.w),
+      h('div', { style: { marginTop: '6px', fontSize: '13px', color: 'var(--ink-2)', fontStyle: 'italic' } }, `${info.ipa} · ${info.pos}`)
+    ));
+    const closeBtn = h('button', {
+      style: { width: '36px', height: '36px', borderRadius: '12px', border: '1px solid var(--line)', background: 'transparent', color: 'var(--ink)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+      onclick: closeSheet, html: I.x.replace('<svg', '<svg width="16" height="16"')
+    });
+    head.append(closeBtn);
+    sheet.append(head);
+
+    // translation card
+    const trCard = h('div', { style: { marginTop: '16px', padding: '14px', borderRadius: '14px', background: 'var(--soft)' } });
+    trCard.append(h('div', { class: 'uplabel', style: { marginBottom: '6px' } }, 'Перевод'));
+    trCard.append(h('div', { style: { fontSize: '18px', fontWeight: 500 } }, info.ru));
+    sheet.append(trCard);
+
+    // example from book
+    const ex = h('div', { style: { marginTop: '16px' } });
+    ex.append(h('div', { class: 'uplabel', style: { marginBottom: '8px' } }, 'Из книги'));
+    ex.append(h('div', { style: { fontSize: '13px', lineHeight: 1.5, color: 'var(--ink)' } , html:
+      `"my younger and more <b style='color:var(--accent)'>${tok.w}</b> years"` }));
+    sheet.append(ex);
+
+    // info strip — all-instances notice
+    if (!wasAlreadyTranslated) {
+      sheet.append(h('div', { style: { marginTop: '14px', padding: '10px 12px', borderRadius: '10px', background: 'color-mix(in oklab, var(--accent) 10%, transparent)', color: 'var(--accent)', fontSize: '12px', fontWeight: 500, display: 'flex', gap: '8px', alignItems: 'center' } , html:
+        `${I.check.replace('<svg', '<svg width="14" height="14"')} Переведены все вхождения в тексте` }));
+    }
+
+    // actions
+    const row = h('div', { style: { marginTop: '20px', display: 'flex', gap: '10px' } });
+    // toggle saved
+    const saveBtn = h('button', {
+      class: 'btn ' + (saved ? 'ghost' : 'primary'),
+      style: { flex: 1 },
+      onclick: () => {
+        if (saved) {
+          S.saved = S.saved.filter(s => s.w !== tok.w);
+          showToast('Убрано из словаря');
+        } else {
+          S.saved.unshift({ w: tok.w, ru: info.ru, ex: 'my younger and more ' + tok.w + ' years', src: 'The Great Gatsby', lvl: 'new', d: 0, ipa: info.ipa, pos: info.pos });
+          showToast('В словарь ✓');
+        }
+        closeSheet();
+      }
+    });
+    saveBtn.innerHTML = saved ? `${I.check.replace('<svg', '<svg width="16" height="16"')} В словаре` : `${I.plus.replace('<svg', '<svg width="16" height="16"')} В словарь`;
+    row.append(saveBtn);
+
+    // undo translation — only if word is translated
+    if (S.translated.has(tok.w)) {
+      const undoBtn = h('button', {
+        class: 'btn ghost', style: { flex: 1 },
+        onclick: () => {
+          S.translated.delete(tok.w);
+          closeSheet();
+          renderReaderOnly();
+          showToast('Вернули оригинал');
+        }
+      });
+      undoBtn.innerHTML = `${I.undo.replace('<svg', '<svg width="16" height="16"')} Оригинал`;
+      row.append(undoBtn);
+    }
+    sheet.append(row);
+
+    openSheet(sheet);
+  }
+
+  function openReaderSettings() {
+    const sheet = h('div', {});
+    sheet.append(h('h3', { style: { margin: '0 0 14px', fontSize: '20px', fontWeight: 600 } }, 'Настройки чтения'));
+
+    const section = (label, content) => {
+      const s = h('div', { style: { marginBottom: '16px' } });
+      s.append(h('div', { class: 'uplabel', style: { marginBottom: '8px' } }, label));
+      s.append(content);
+      return s;
+    };
+
+    // theme
+    const themeRow = h('div', { style: { display: 'flex', gap: '8px' } });
+    ['Светлая','Тёмная','Авто'].forEach((lbl, i) => {
+      const on = (i === 0 && !S.dark) || (i === 1 && S.dark);
+      themeRow.append(h('button', {
+        class: 'chip' + (on ? ' on' : ''),
+        onclick: () => {
+          if (i < 2) { S.dark = i === 1; applyTheme(); openReaderSettings(); }
+        }
+      }, lbl));
+    });
+    sheet.append(section('Тема', themeRow));
+
+    // font size mock
+    sheet.append(section('Размер шрифта',
+      (() => {
+        const row = h('div', { style: { display: 'flex', gap: '8px' } });
+        ['S','M','L','XL'].forEach((s,i) => row.append(h('span', { class: 'chip' + (i === 1 ? ' on' : '') }, s)));
+        return row;
+      })()
+    ));
+
+    // reset translations
+    const resetRow = h('div', {});
+    const resetBtn = h('button', {
+      class: 'btn ghost full',
+      onclick: () => { S.translated.clear(); closeSheet(); renderReaderOnly(); showToast('Переводы сброшены'); }
+    });
+    resetBtn.innerHTML = `${I.undo.replace('<svg', '<svg width="16" height="16"')} Показать все оригиналы`;
+    resetRow.append(resetBtn);
+    sheet.append(section('Перевод', resetRow));
+
+    openSheet(sheet);
+  }
+
+  // DICTIONARY
+  function ScreenDictionary() {
+    const root = h('div', { class: 'scroll screen-in' });
+
+    // header
+    root.append(h('div', { style: { padding: '18px 22px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' } },
+      h('h1', { style: { margin: 0, fontSize: '30px', letterSpacing: '-0.02em', fontWeight: 600 } }, 'Словарь'),
+      h('div', { style: { fontSize: '11px', color: 'var(--ink-2)' } }, `${S.saved.length} слов`)
+    ));
+
+    // stat strip
+    const counts = {
+      review: S.saved.filter(d=>d.lvl==='review').length,
+      active: S.saved.filter(d=>d.lvl==='new'||d.lvl==='learning').length,
+      mastered: S.saved.filter(d=>d.lvl==='mastered').length,
+    };
+    const stat = h('div', { class: 'card', style: { margin: '10px 22px 16px', padding: '14px', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px' } });
+    stat.innerHTML = `
+      <div>
+        <div style="font-size:22px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums">${counts.review}</div>
+        <div style="font-size:10px;color:var(--ink-2);margin-top:2px">На повтор<br/>сегодня</div>
+      </div>
+      <div>
+        <div style="font-size:22px;font-weight:700;font-variant-numeric:tabular-nums">${counts.active}</div>
+        <div style="font-size:10px;color:var(--ink-2);margin-top:2px">Учу<br/>сейчас</div>
+      </div>
+      <div>
+        <div style="font-size:22px;font-weight:700;font-variant-numeric:tabular-nums">${counts.mastered}</div>
+        <div style="font-size:10px;color:var(--ink-2);margin-top:2px">Выучено</div>
+      </div>
+    `;
+    root.append(stat);
+
+    // filter chips
+    const filters = [
+      { id: 'all',      lbl: 'Все',       n: S.saved.length },
+      { id: 'review',   lbl: 'Повторить', n: counts.review },
+      { id: 'learning', lbl: 'Учу',       n: S.saved.filter(d=>d.lvl==='learning').length },
+      { id: 'new',      lbl: 'Новые',     n: S.saved.filter(d=>d.lvl==='new').length },
+      { id: 'mastered', lbl: 'Выучено',   n: counts.mastered },
+    ];
+    const fRow = h('div', { style: { padding: '0 22px 12px', display: 'flex', gap: '8px', overflowX: 'auto', flexWrap: 'nowrap' } });
+    filters.forEach(f => {
+      const c = h('span', {
+        class: 'chip' + (S.dictFilter === f.id ? ' on' : ''),
+        onclick: () => { S.dictFilter = f.id; render(); }
+      });
+      c.innerHTML = `${f.lbl} <span class="n">${f.n}</span>`;
+      fRow.append(c);
+    });
+    root.append(fRow);
+
+    // list
+    const filtered = S.dictFilter === 'all' ? S.saved : S.saved.filter(d => d.lvl === S.dictFilter);
+    const list = h('div', { style: { padding: '0 22px 24px', display: 'flex', flexDirection: 'column', gap: '10px' } });
+
+    if (filtered.length === 0) {
+      list.append(h('div', { style: { padding: '40px 20px', textAlign: 'center', color: 'var(--ink-2)', fontSize: '13px' } }, 'Здесь пока пусто'));
+    } else {
+      filtered.forEach(d => {
+        const b = badgeFor(d.lvl);
+        const card = h('div', { class: 'card', style: { padding: '14px', cursor: 'pointer' }, onclick: () => openSavedWord(d) });
+        card.innerHTML = `
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+                <div style="font-size:19px;font-weight:600;letter-spacing:-0.01em">${d.w}</div>
+                <div style="font-size:13px;color:var(--ink-2)">— ${d.ru}</div>
+              </div>
+              <div style="margin-top:6px;font-size:12px;color:var(--ink-2);line-height:1.4">"${d.ex}"</div>
+              <div style="margin-top:8px;font-size:10px;color:var(--ink-2);letter-spacing:0.02em">
+                ${d.src}${d.d > 0 ? ' · ' + d.d + ' дн.' : ''}
+              </div>
+            </div>
+            <span style="padding:4px 8px;border-radius:6px;font-size:10px;font-weight:600;background:${b.bg};color:${b.col};white-space:nowrap">${b.t}</span>
+          </div>
+        `;
+        list.append(card);
+      });
+    }
+    root.append(list);
+    return root;
+  }
+
+  function badgeFor(lvl) {
+    if (lvl === 'new') return { bg: 'var(--accent)', col: '#fff', t: 'новое' };
+    if (lvl === 'learning') return { bg: 'var(--soft)', col: 'var(--ink)', t: 'учу' };
+    if (lvl === 'review') return { bg: '#c9a253', col: '#2d1a12', t: 'повторить' };
+    return { bg: S.dark ? '#2a3f24' : '#d8e0c0', col: S.dark ? '#c5d5a0' : '#2a3f14', t: 'выучено' };
+  }
+
+  function openSavedWord(d) {
+    const sheet = h('div', {});
+    const head = h('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' } });
+    head.append(h('div', {},
+      h('div', { style: { fontSize: '34px', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' } }, d.w),
+      h('div', { style: { marginTop: '6px', fontSize: '13px', color: 'var(--ink-2)', fontStyle: 'italic' } }, `${d.ipa} · ${d.pos}`)
+    ));
+    const closeBtn = h('button', {
+      style: { width: '36px', height: '36px', borderRadius: '12px', border: '1px solid var(--line)', background: 'transparent', color: 'var(--ink)', cursor: 'pointer' },
+      onclick: closeSheet, html: I.x.replace('<svg', '<svg width="16" height="16"')
+    });
+    head.append(closeBtn);
+    sheet.append(head);
+
+    sheet.append(h('div', { style: { marginTop: '16px', padding: '14px', borderRadius: '14px', background: 'var(--soft)' } },
+      h('div', { class: 'uplabel', style: { marginBottom: '6px' } }, 'Перевод'),
+      h('div', { style: { fontSize: '18px', fontWeight: 500 } }, d.ru)
+    ));
+
+    sheet.append(h('div', { style: { marginTop: '16px' } },
+      h('div', { class: 'uplabel', style: { marginBottom: '8px' } }, `Из книги · ${d.src}`),
+      h('div', { style: { fontSize: '13px', lineHeight: 1.5 }, html: `"${d.ex.replace(d.w, `<b style='color:var(--accent)'>${d.w}</b>`)}"` })
+    ));
+
+    const row = h('div', { style: { marginTop: '22px', display: 'flex', gap: '10px' } });
+    const train = h('button', { class: 'btn primary', style: { flex: 1 }, onclick: () => { closeSheet(); S.tab = 'learn'; S.screen = 'learnCard'; S.learn = { idx: 0, correct: 0, done: false, feedback: null }; render(); } });
+    train.innerHTML = `${I.brain.replace('<svg', '<svg width="16" height="16"')} Тренировать`;
+    const del = h('button', { class: 'btn ghost', style: { flex: 1 }, onclick: () => { S.saved = S.saved.filter(s => s.w !== d.w); closeSheet(); render(); showToast('Удалено'); } });
+    del.innerHTML = `${I.x.replace('<svg', '<svg width="16" height="16"')} Удалить`;
+    row.append(train, del);
+    sheet.append(row);
+
+    openSheet(sheet);
+  }
+
+  // LEARN HOME
+  function ScreenLearn() {
+    const root = h('div', { class: 'scroll screen-in', style: { padding: '18px 22px 24px' } });
+    root.append(h('div', { class: 'uplabel', style: { marginBottom: '2px' } }, 'Тренировка'));
+    root.append(h('h1', { style: { margin: 0, fontSize: '30px', letterSpacing: '-0.02em', fontWeight: 600 } }, 'Что учим сегодня'));
+
+    // daily goal
+    const ready = S.saved.filter(d => d.lvl !== 'mastered').length;
+    const goal = h('div', { class: 'card', style: { marginTop: '18px', padding: '18px', background: 'var(--soft)', border: 'none' } });
+    goal.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="width:32px;height:32px;border-radius:10px;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center">${I.fire.replace('<svg', '<svg width="18" height="18"')}</div>
+        <div>
+          <div style="font-size:14px;font-weight:600">Цель дня: 10 слов</div>
+          <div style="font-size:11px;color:var(--ink-2)">8 / 10 сделано</div>
+        </div>
+      </div>
+      <div class="pbar"><i style="width:80%"></i></div>
+    `;
+    root.append(goal);
+
+    // mode cards
+    const modes = [
+      { id: 'mc', title: 'Выбор перевода', desc: '4 варианта · быстро и бодро', n: ready, emoji: '⚡' },
+      { id: 'fl', title: 'Карточки',       desc: 'Интервальные повторения',     n: ready, emoji: '🧠' },
+    ];
+    root.append(h('div', { class: 'uplabel', style: { marginTop: '22px', marginBottom: '10px' } }, 'Режимы'));
+
+    modes.forEach((m, i) => {
+      const card = h('div', { class: 'card', style: { padding: '16px', marginBottom: '10px', cursor: 'pointer', display: 'flex', gap: '14px', alignItems: 'center' } , onclick: () => { S.screen = 'learnCard'; S.learn = { idx: 0, correct: 0, done: false, feedback: null }; render(); } });
+      card.innerHTML = `
+        <div style="width:44px;height:44px;border-radius:12px;background:var(--soft);display:inline-flex;align-items:center;justify-content:center;font-size:22px">${m.emoji}</div>
+        <div style="flex:1">
+          <div style="font-size:15px;font-weight:600">${m.title}</div>
+          <div style="font-size:12px;color:var(--ink-2);margin-top:2px">${m.desc}</div>
+        </div>
+        <div style="font-size:12px;color:var(--ink-2);display:inline-flex;align-items:center;gap:6px">
+          ${m.n} слов ${I.chevR.replace('<svg', '<svg width="14" height="14"')}
+        </div>
+      `;
+      root.append(card);
+    });
+
+    return root;
+  }
+
+  // LEARN CARD (multiple choice)
+  function ScreenLearnCard() {
+    const root = h('div', { class: 'scroll screen-in', style: { padding: '14px 22px 24px' } });
+
+    const pool = S.saved.filter(d => d.lvl !== 'mastered');
+    const total = Math.min(pool.length, 10);
+
+    if (S.learn.done || S.learn.idx >= total || total === 0) {
+      // done screen
+      root.append(h('div', { style: { textAlign: 'center', padding: '40px 20px' } },
+        h('div', { style: { fontSize: '56px', marginBottom: '14px' } }, '✨'),
+        h('h1', { style: { margin: 0, fontSize: '28px', fontWeight: 600 } }, 'Готово!'),
+        h('div', { style: { marginTop: '10px', fontSize: '14px', color: 'var(--ink-2)' } }, `${S.learn.correct} из ${total} верно`),
+        h('div', { class: 'card', style: { marginTop: '26px', padding: '16px', textAlign: 'left', background: 'var(--soft)', border: 'none' }, html: `
+          <div style="font-size:12px;color:var(--ink-2);margin-bottom:4px">Серия</div>
+          <div style="font-size:20px;font-weight:600">7 дней подряд 🔥</div>
+          <div style="font-size:11px;color:var(--ink-2);margin-top:4px">+${S.learn.correct * 10} XP</div>
+        `}),
+      ));
+      const done = h('button', { class: 'btn primary full', style: { marginTop: '20px' }, onclick: () => { S.screen = 'learn'; render(); } }, 'Вернуться');
+      root.append(done);
+      return root;
+    }
+
+    const cur = pool[S.learn.idx];
+    // generate 3 distractors
+    const distractors = S.saved.filter(d => d.w !== cur.w).map(d => d.ru);
+    const fallback = ['внушительный','странный','тёплый','острый','лёгкий','прилежный','хрупкий'];
+    const picks = [cur.ru, ...[...distractors, ...fallback].slice(0, 3)];
+    // deterministic shuffle (based on idx)
+    const ordered = picks.slice().sort((a, b) => (a.length - b.length) + (S.learn.idx - S.learn.idx * 0.5));
+
+    // header + progress
+    root.append(h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' } },
+      h('button', { class: 'btn ghost sm', style: { padding: '6px 10px' }, onclick: () => { S.screen = 'learn'; render(); }, html: I.chevL.replace('<svg', '<svg width="18" height="18"') }),
+      h('div', { style: { fontSize: '12px', color: 'var(--ink-2)' } }, `${S.learn.idx + 1} / ${total}`),
+      h('div', { style: { width: '34px' } })
+    ));
+    const prog = h('div', { style: { display: 'flex', gap: '4px', marginBottom: '20px' } });
+    for (let i = 0; i < total; i++) {
+      prog.append(h('div', { style: { flex: 1, height: '3px', borderRadius: '2px', background: i < S.learn.idx ? 'var(--accent)' : i === S.learn.idx ? 'var(--ink)' : 'var(--line)' } }));
+    }
+    root.append(prog);
+
+    // flashcard
+    const card = h('div', { class: 'card', style: { padding: '30px 20px 24px', borderRadius: '20px', minHeight: '260px' } });
+    card.append(h('div', { class: 'uplabel', style: { textAlign: 'center' } }, 'Какой перевод?'));
+    card.append(h('div', { style: { marginTop: '16px', textAlign: 'center', fontSize: '42px', lineHeight: 1, letterSpacing: '-0.02em', fontWeight: 600 } }, cur.w));
+    card.append(h('div', { style: { marginTop: '10px', textAlign: 'center', fontSize: '12px', color: 'var(--ink-2)', fontStyle: 'italic' } }, `${cur.ipa} · ${cur.pos}`));
+    card.append(h('div', { style: { marginTop: '22px', padding: '14px 16px', borderRadius: '12px', background: 'var(--soft)', fontSize: '14px', lineHeight: 1.55, textAlign: 'center' } , html:
+      `"${cur.ex.replace(cur.w, `<b style='color:var(--accent)'>${cur.w}</b>`)}"` }));
+    card.append(h('div', { style: { marginTop: '8px', textAlign: 'center', fontSize: '10px', color: 'var(--ink-2)', letterSpacing: '0.04em' } }, cur.src));
+    root.append(card);
+
+    // answers
+    const grid = h('div', { style: { marginTop: '18px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } });
+    ordered.forEach((opt) => {
+      const right = opt === cur.ru;
+      let style = 'background:var(--card);color:var(--ink);border:1.5px solid var(--line);';
+      if (S.learn.feedback) {
+        if (right) style = 'background:color-mix(in oklab, #6b8a4a 25%, var(--card));color:var(--ink);border:1.5px solid #6b8a4a;';
+        else if (S.learn.feedback === 'wrong' && opt === S.learn.pickedWrong) style = 'background:color-mix(in oklab, var(--accent) 18%, var(--card));color:var(--ink);border:1.5px solid var(--accent);';
+      }
+      const btn = h('button', {
+        style: { ...styleFromStr(style), padding: '16px 14px', borderRadius: '14px', fontSize: '15px', fontWeight: 500, fontFamily: 'inherit', textAlign: 'left', cursor: S.learn.feedback ? 'default' : 'pointer', transition: 'background 0.2s, border 0.2s' },
+        onclick: () => {
+          if (S.learn.feedback) return;
+          if (right) {
+            S.learn.feedback = 'ok';
+            S.learn.correct += 1;
+            renderLearnOnly();
+            setTimeout(() => { S.learn.idx += 1; S.learn.feedback = null; S.learn.pickedWrong = null; if (S.learn.idx >= total) S.learn.done = true; render(); }, 700);
+          } else {
+            S.learn.feedback = 'wrong';
+            S.learn.pickedWrong = opt;
+            renderLearnOnly();
+            setTimeout(() => { S.learn.idx += 1; S.learn.feedback = null; S.learn.pickedWrong = null; if (S.learn.idx >= total) S.learn.done = true; render(); }, 1200);
+          }
+        }
+      }, opt);
+      grid.append(btn);
+    });
+    root.append(grid);
+
+    // footer actions
+    root.append(h('div', { style: { marginTop: '18px', display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-2)' } },
+      h('span', { style: { cursor: 'pointer' }, onclick: () => { S.learn.idx += 1; if (S.learn.idx >= total) S.learn.done = true; render(); } }, 'Пропустить'),
+      h('span', {}, S.learn.feedback === 'ok' ? '✓ верно' : S.learn.feedback === 'wrong' ? 'правильный вариант подсвечен' : 'нажми любой вариант')
+    ));
+
+    return root;
+  }
+
+  function styleFromStr(str) {
+    const obj = {};
+    str.split(';').forEach(s => { const [k,v] = s.split(':'); if (k && v) obj[k.trim().replace(/-([a-z])/g, (_,c)=>c.toUpperCase())] = v.trim(); });
+    return obj;
+  }
+
+  // ─────────── Render ───────────
+  function render() {
+    const root = $('root');
+    root.innerHTML = '';
+    closeSheet();
+
+    let screen;
+    switch (S.screen) {
+      case 'reader':    screen = ScreenReader(); break;
+      case 'cat':       screen = ScreenCatalog(); break;
+      case 'dict':      screen = ScreenDictionary(); break;
+      case 'learn':     screen = ScreenLearn(); break;
+      case 'learnCard': screen = ScreenLearnCard(); break;
+      case 'lib':
+      default:          screen = ScreenLibrary(); break;
+    }
+    root.append(screen);
+
+    // tab bar visibility — hide in reader
+    const slot = $('tabbarSlot');
+    slot.innerHTML = '';
+    if (S.screen !== 'reader') slot.append(TabBar());
+  }
+
+  // in-place re-render helpers that don't blow the whole screen away
+  function renderReaderOnly() {
+    if (S.screen !== 'reader') return;
+    const root = $('root');
+    root.innerHTML = '';
+    root.append(ScreenReader());
+  }
+  function renderLearnOnly() {
+    if (S.screen !== 'learnCard') return;
+    const root = $('root');
+    root.innerHTML = '';
+    root.append(ScreenLearnCard());
+  }
+
+  // ─────────── Theme toggle ───────────
+  function applyTheme() {
+    document.body.classList.toggle('dark', S.dark);
+    document.getElementById('phone').classList.toggle('dark', S.dark);
+    const t = $('themeToggle');
+    t.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.mode === (S.dark ? 'dark' : 'light')));
+  }
+  $('themeToggle').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    S.dark = b.dataset.mode === 'dark';
+    applyTheme();
+  });
+
+  applyTheme();
+  render();
+  </script>
+</body>
+</html>
