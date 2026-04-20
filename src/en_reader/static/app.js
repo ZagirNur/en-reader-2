@@ -1729,13 +1729,8 @@ function buildWordDetailSheet(word) {
   primary.className = "btn primary";
   primary.textContent = "Тренировать";
   primary.addEventListener("click", () => {
-    // M16.6 ships /learn/card; navigating there now will route to the
-    // error view via parseRoute's fallthrough, which is acceptable — the
-    // sheet still closes via scrim / Esc and the user hasn't lost state.
     closeSheet();
-    navigate(
-      `/learn/card?from=dict&lemma=${encodeURIComponent(word.lemma || "")}`,
-    );
+    showToast("Скоро");
   });
   actions.appendChild(primary);
 
