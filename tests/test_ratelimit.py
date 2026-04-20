@@ -112,3 +112,48 @@ def test_auth_rate_limit_is_still_active() -> None:
         codes.append(r.status_code)
     assert codes[:10] == [401] * 10
     assert codes[10] == 429
+
+
+def test_translate_rate_limit_per_user_isolation() -> None:
+    """Two users each get their own 60-hit window on /api/translate.
+
+    ``rl_translate`` buckets by ``str(user.id)`` — a saturated user A
+    must not drag user B into a 429. We burn A's 60 hits, confirm A's
+    61st trips the limit, and confirm B's first hit still sails through.
+    """
+    client_a = TestClient(app)
+    ra = client_a.post(
+        "/auth/signup",
+        json={"email": "rl-a@example.com", "password": "longpass1"},
+    )
+    assert ra.status_code == 200, ra.text
+
+    client_b = TestClient(app)
+    rb = client_b.post(
+        "/auth/signup",
+        json={"email": "rl-b@example.com", "password": "longpass1"},
+    )
+    assert rb.status_code == 200, rb.text
+
+    with patch("en_reader.app.translate_one", Mock(return_value="перевод")):
+        # A burns all 60 allowed hits.
+        for i in range(60):
+            r = client_a.post(
+                "/api/translate",
+                json={"unit_text": f"a{i}", "sentence": "ctx", "lemma": f"a{i}"},
+            )
+            assert r.status_code == 200, (i, r.text)
+
+        # A's 61st must now 429 — their own bucket is full.
+        over_a = client_a.post(
+            "/api/translate",
+            json={"unit_text": "aover", "sentence": "ctx", "lemma": "aover"},
+        )
+        assert over_a.status_code == 429, over_a.text
+
+        # B's first hit must still 200 — B has an independent bucket.
+        r_b = client_b.post(
+            "/api/translate",
+            json={"unit_text": "b1", "sentence": "ctx", "lemma": "b1"},
+        )
+        assert r_b.status_code == 200, r_b.text
