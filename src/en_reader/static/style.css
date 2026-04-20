@@ -179,6 +179,26 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
   text-transform: uppercase; opacity: 0.78; font-weight: 500;
 }
 
+/* M16.1: 7 deterministic gradient presets for book covers (light + dark).
+   Paired with _COVER_PRESETS on the backend and `coverPresetFor(book_id)`
+   on the frontend. `.cover.c-mustard` uses dark ink because yellow-on-white
+   fails contrast. */
+.cover.c-olive   { background: linear-gradient(150deg, #6a7a42, #3d4826); }
+.cover.c-clay    { background: linear-gradient(150deg, #c85a38, #7a2a18); }
+.cover.c-ink     { background: linear-gradient(150deg, #2a3342, #0f141c); }
+.cover.c-mauve   { background: linear-gradient(150deg, #8c5a6b, #4a2a35); }
+.cover.c-mustard { background: linear-gradient(150deg, #c9a253, #7a5a1c); color: #14141a; }
+.cover.c-mustard .ca { color: #14141a; }
+.cover.c-sage    { background: linear-gradient(150deg, #8a9a6c, #4a5836); }
+.cover.c-rose    { background: linear-gradient(150deg, #c8685a, #6f2e24); }
+.dark .cover.c-olive   { background: linear-gradient(150deg, #3a4424, #1d2212); }
+.dark .cover.c-clay    { background: linear-gradient(150deg, #b85a38, #5a2612); }
+.dark .cover.c-ink     { background: linear-gradient(150deg, #303a4c, #0a0d14); }
+.dark .cover.c-mauve   { background: linear-gradient(150deg, #6f4658, #3a2530); }
+.dark .cover.c-mustard { background: linear-gradient(150deg, #c9a253, #5a4418); }
+.dark .cover.c-sage    { background: linear-gradient(150deg, #6b7d5a, #3a4632); }
+.dark .cover.c-rose    { background: linear-gradient(150deg, #a85c4c, #5a2a20); }
+
 /* --- Library (M9.2) --- */
 .library { max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
 .library-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
@@ -336,6 +356,86 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
   border-radius: 4px;
 }
 .logout-btn:hover { color: var(--ink); background: var(--bg-2); }
+
+/* --- M16.2: canonical shared components (scrim, sheet, toast, tabbar). ---
+   Coexists with the M4.2 ad-hoc `.sheet-backdrop` + ad-hoc toast DOM above.
+   These rules drive the #scrim / #sheet / #toast / #tabbar shells in
+   index.html, which are lazy-populated by openSheet/showToast/renderTabBar. */
+
+/* scrim */
+.scrim {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(0,0,0,0.32);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s;
+}
+.scrim.show { opacity: 1; pointer-events: auto; }
+
+/* sheet (note: the canonical #sheet shell is transform-hidden by default;
+   it only renders visibly once openSheet() adds the `.show` class) */
+#sheet.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 100;
+  background: var(--card); color: var(--ink);
+  border-top-left-radius: 28px; border-top-right-radius: 28px;
+  padding: 16px 22px 28px;
+  transform: translateY(100%);
+  transition: transform 0.28s cubic-bezier(.2,.9,.3,1);
+  box-shadow: 0 -20px 40px -14px rgba(0,0,0,0.35);
+  max-width: 720px; margin: 0 auto;
+  max-height: 85vh; overflow-y: auto;
+}
+#sheet.sheet.show { transform: translateY(0); }
+.sheet .handle {
+  width: 40px; height: 4px; border-radius: 2px; background: var(--line);
+  margin: 0 auto 16px;
+}
+
+/* toast (canonical #toast — replaces the M4.2 ad-hoc `.toast` rules above
+   for the shared shell, while keeping the old rules as a fallback for any
+   leftover callsite). The double-selector is intentional: `#toast.toast`
+   is more specific than `.toast`, so it wins without !important. */
+#toast.toast {
+  position: fixed; top: 20px; left: 50%;
+  transform: translate(-50%, -20px);
+  background: var(--ink); color: var(--bg);
+  padding: 10px 16px; border-radius: 999px;
+  font-size: 13px; font-weight: 500;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 150;
+  box-shadow: 0 10px 24px -8px rgba(0,0,0,0.3);
+}
+#toast.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* tab bar */
+.tabbar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  max-width: 720px; margin: 0 auto;
+  display: flex; padding: 8px 10px 20px;
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line);
+  z-index: 80;
+}
+.tabbar.hidden { display: none; }
+.tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 0; cursor: pointer; position: relative;
+  font-size: 10px; font-weight: 500; color: var(--ink-3);
+  background: none; border: none;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+.tab.on { color: var(--ink); }
+.tab.on .tab-dot {
+  position: absolute; bottom: -8px; width: 4px; height: 4px;
+  border-radius: 50%; background: var(--accent);
+}
+.tab svg { width: 22px; height: 22px; }
+
+/* Give #root breathing room under the tabbar while it's visible so the
+   last library card isn't clipped by the bar's 62 px intrusion. */
+body.with-tabbar #root { padding-bottom: 82px; }
 
 /* --- M16.1: accessibility — honor the user's reduced-motion preference. */
 @media (prefers-reduced-motion: reduce) {
