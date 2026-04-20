@@ -842,28 +842,108 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 }
 .screen-in { animation: screen-in 0.18s ease-out; }
 
-/* --- M17.1: mobile strips the phone shell so the app goes full-bleed. */
+/* --- M17.4: responsive breakpoints ---------------------------------------
+
+   Single responsive layout. The "phone-shell" markup in index.html is
+   kept only to preserve the DOM hierarchy the SPA was written against —
+   its decorative chrome (notch / statusbar / homebar / bordered frame)
+   is unconditionally hidden, because sticking a fake iPhone into the
+   middle of a desktop browser window is not actually a feature.
+
+     ≤ 480   — phone, full-bleed
+     481–900 — tablet / narrow desktop (main reading column centered)
+     ≥ 900   — wide desktop (wider grid, same centered column)
+   -------------------------------------------------------------------- */
+
+/* Always strip the phone-shell chrome. */
+body {
+  padding: 0; background: var(--bg);
+  display: block; align-items: stretch;
+}
+body.dark { background: var(--bg); }
+.stage { display: block; width: 100%; }
+.phone {
+  width: 100%; min-height: 100vh;
+  border-radius: 0; border: none; box-shadow: none;
+}
+.notch, .homebar, .statusbar { display: none; }
+.phone-body { display: block; }
+
+/* Tabbar pins to the viewport bottom — the shell is gone. */
+.tabbar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  max-width: 100%; margin-top: 0;
+  justify-content: center;
+}
+.tabbar .tab { max-width: 140px; flex: 1; }
+body.with-tabbar #root { padding-bottom: 82px; }
+
+/* Global content cap so a wide monitor doesn't stretch every line
+   from edge to edge. Each view re-tunes its own max-width below. */
+.phone-body > #root > main {
+  max-width: 920px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Sheet centers to a comfortable pop-up width on roomy viewports. */
+#sheet.sheet {
+  left: 50%; right: auto;
+  transform: translateX(-50%) translateY(100%);
+  width: 100%; max-width: 520px;
+}
+#sheet.sheet.show { transform: translateX(-50%) translateY(0); }
+#toast.toast { top: 16px; }
+
+/* Mobile overrides: tighter paddings, full-width sheet. */
 @media (max-width: 480px) {
-  body {
-    padding: 0; background: var(--bg);
-    display: block;
-  }
-  body.dark { background: var(--bg); }
-  .phone {
-    width: 100%; min-height: 100vh;
-    border-radius: 0; border: none; box-shadow: none;
-  }
-  .notch, .homebar, .statusbar { display: none; }
-  .stage { display: block; }
-  /* M17.3: on mobile the tabbar pins to the viewport bottom instead
-     of the phone-body bottom (shell is stripped). Pad #root so the
-     last row isn't clipped by the bar. */
-  .tabbar {
-    position: fixed; bottom: 0; left: 0; right: 0;
+  .phone-body > #root > main { max-width: none; padding-inline: 0; }
+  #sheet.sheet {
+    left: 0; right: 0;
+    transform: translateY(100%);
     max-width: 100%;
   }
-  body.with-tabbar #root { padding-bottom: 82px; }
-  #sheet.sheet { max-width: 100%; }
+  #sheet.sheet.show { transform: translateY(0); }
+  .tabbar { justify-content: space-between; }
+  .tabbar .tab { max-width: none; }
+}
+
+/* Tablet+ per-view caps. `.phone-body > #root > main` is our
+   specificity ceiling — we match it to override the global 920 px
+   cap with the per-view width each screen needs. */
+@media (min-width: 481px) {
+  /* Reader: typography-friendly column, never wider than 720 px. */
+  .phone-body > #root > main.reader { max-width: 720px; padding: 32px 32px 24px; }
+  .reader-header { max-width: 720px; margin-left: auto; margin-right: auto; }
+  /* Dictionary / learn / auth read best around 560 px. */
+  .phone-body > #root > main.dictionary,
+  .phone-body > #root > main.learn-home,
+  .phone-body > #root > main.learn-card-screen,
+  .phone-body > #root > main.auth-view {
+    max-width: 560px;
+  }
+  /* Catalog section rows stop being edge-bleed scrollers — they wrap
+     onto multiple lines so nothing leaks off-screen, and the cards
+     widen to a pleasing 140px grid. */
+  .catalog-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 16px 14px;
+    overflow-x: visible;
+    margin: 0; padding: 0;
+  }
+  .catalog-card { width: auto; }
+  .catalog-chips { overflow-x: visible; margin: 0 0 18px; padding: 0; flex-wrap: wrap; }
+  /* Library + book grid widens to fill the container. */
+  .grid { grid-template-columns: repeat(4, 1fr); gap: 16px; row-gap: 24px; }
+}
+
+@media (min-width: 720px) {
+  .grid { grid-template-columns: repeat(5, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .grid { grid-template-columns: repeat(6, 1fr); }
 }
 
 /* --- M16.1: accessibility — honor the user's reduced-motion preference. */
