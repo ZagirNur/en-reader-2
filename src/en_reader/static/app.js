@@ -1674,9 +1674,12 @@ function closeSheet() {
 }
 
 // Press Escape → close the canonical sheet. Installed once at module load
-// so we don't leak per-open listeners.
+// so we don't leak per-open listeners. Guarded on the sheet actually being
+// open so Esc inside an input field doesn't trip it.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeSheet();
+  if (e.key !== "Escape") return;
+  const sheet = document.getElementById("sheet");
+  if (sheet && sheet.classList.contains("show")) closeSheet();
 });
 
 // M16.2: canonical toast. 1.6 s auto-hide. Uses the shared #toast shell
@@ -1867,18 +1870,11 @@ function withScrollAnchor(mutateSync) {
   window.scrollBy(0, topAfter - topBefore);
 }
 
-function toast(message) {
-  document.querySelectorAll(".toast").forEach((n) => n.remove());
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = message;
-  document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("show"));
-  setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => el.remove(), 250);
-  }, 2000);
-}
+// Legacy ad-hoc `toast()` implementation removed — the canonical
+// `showToast()` (M16.2) handles the #toast shell, and `const toast =
+// showToast` at module top keeps the old name as a back-compat alias.
+// Redefining it here as a function caused a SyntaxError under ES-module
+// strict mode and killed the SPA at load time.
 
 // --- render ---
 function render() {
