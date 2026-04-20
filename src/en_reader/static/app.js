@@ -73,6 +73,11 @@ const state = {
   // value); rendering falls back to 0 when null.
   learn: null,
   learnStats: null,
+  // M16.7: flashcards session. `state.flash` mirrors `state.learn`
+  // in lifecycle — null outside /learn/flash, populated on entry
+  // with {pool, idx, flipped, correct, done}. Same backend; the
+  // mode difference is purely UI (flip card + binary Knew/Didn't).
+  flash: null,
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -186,9 +191,11 @@ function parseRoute(path) {
   // M16.5: catalog screen. Tab bar's "cat" tab routes here.
   if (path === "/cat") return { view: "catalog" };
   // M16.6: training screens. `/learn` is the home (mode picker);
-  // `/learn/card` is the multiple-choice session.
+  // `/learn/card` is the multiple-choice session. M16.7 adds
+  // `/learn/flash` — the flashcards flip-session.
   if (path === "/learn") return { view: "learnHome" };
   if (path === "/learn/card") return { view: "learnCard" };
+  if (path === "/learn/flash") return { view: "learnFlash" };
   const m = BOOK_ROUTE_RE.exec(path);
   if (m) return { view: "reader", bookId: Number(m[1]) };
   return { view: "error" };
@@ -219,16 +226,17 @@ function navigate(path) {
   if (state.view === "catalog" && parsed.view !== "catalog") {
     patch.catalog = null;
   }
-  // M16.6: leaving any learn screen drops the session state so a
-  // revisit always starts fresh. Results are persisted server-side
-  // after each answer, not in `state.learn`.
-  const leavingLearn =
-    (state.view === "learnHome" || state.view === "learnCard") &&
-    parsed.view !== "learnHome" &&
-    parsed.view !== "learnCard";
+  // M16.6/M16.7: leaving any learn screen drops the session state
+  // so a revisit always starts fresh. Results are persisted
+  // server-side after each answer, not in `state.learn` or
+  // `state.flash`.
+  const _isLearnView = (v) =>
+    v === "learnHome" || v === "learnCard" || v === "learnFlash";
+  const leavingLearn = _isLearnView(state.view) && !_isLearnView(parsed.view);
   if (leavingLearn) {
     patch.learn = null;
     patch.learnStats = null;
+    patch.flash = null;
   }
   setState(patch);
 }
@@ -254,15 +262,15 @@ function onPopState() {
   if (state.view === "catalog" && parsed.view !== "catalog") {
     patch.catalog = null;
   }
-  // M16.6: leaving any learn screen drops the session state so a
-  // revisit always starts fresh.
-  const leavingLearn =
-    (state.view === "learnHome" || state.view === "learnCard") &&
-    parsed.view !== "learnHome" &&
-    parsed.view !== "learnCard";
+  // M16.6/M16.7: leaving any learn screen drops the session state so
+  // a revisit always starts fresh.
+  const _isLearnView = (v) =>
+    v === "learnHome" || v === "learnCard" || v === "learnFlash";
+  const leavingLearn = _isLearnView(state.view) && !_isLearnView(parsed.view);
   if (leavingLearn) {
     patch.learn = null;
     patch.learnStats = null;
+    patch.flash = null;
   }
   setState(patch);
 }
@@ -2176,8 +2184,9 @@ function renderLearnHome() {
   modesLabel.textContent = "Режимы";
   main.appendChild(modesLabel);
 
-  // Two mode cards. "Выбор перевода" routes into the MC session;
-  // "Карточки" toasts "Скоро" until M16.7 ships.
+  // Two mode cards. "Выбор перевода" routes into the MC session
+  // (M16.6); "Карточки" routes into the flashcard flip-session
+  // (M16.7). Both use the same /training pool under the hood.
   const modes = [
     {
       id: "mc",
@@ -2191,7 +2200,7 @@ function renderLearnHome() {
       emoji: "🧠",
       title: "Карточки",
       desc: "Интервальные повторения",
-      onClick: () => showToast("Скоро"),
+      onClick: () => navigate("/learn/flash"),
     },
   ];
   for (const m of modes) {
@@ -2266,48 +2275,15 @@ function renderLearnCard() {
 
   const total = pool.length;
 
-  // Done screen — rendered once idx crosses total (or done flag flips).
+  // Done screen — rendered once idx crosses total (or done flag
+  // flips). Shared layout with M16.7 flashcards via `_buildLearnDone`
+  // (see below); only the subtitle differs between the two modes.
   if (state.learn.done || state.learn.idx >= total) {
-    const done = document.createElement("div");
-    done.className = "learn-done";
-    const emoji = document.createElement("div");
-    emoji.className = "learn-done-emoji";
-    emoji.textContent = "✨";
-    done.appendChild(emoji);
-    const h1 = document.createElement("h1");
-    h1.className = "learn-done-h1";
-    h1.textContent = "Готово!";
-    done.appendChild(h1);
-    const sub = document.createElement("div");
-    sub.className = "learn-done-sub";
-    sub.textContent = `${state.learn.correct} из ${total} верно`;
-    done.appendChild(sub);
-
-    // Streak card — placeholder values until M16.8 wires the real data.
-    const streak = document.createElement("div");
-    streak.className = "learn-done-streak";
-    const streakLabel = document.createElement("div");
-    streakLabel.className = "learn-done-streak-label";
-    streakLabel.textContent = "Серия";
-    streak.appendChild(streakLabel);
-    const streakVal = document.createElement("div");
-    streakVal.className = "learn-done-streak-val";
-    streakVal.textContent = "— дней подряд";
-    streak.appendChild(streakVal);
-    const xp = document.createElement("div");
-    xp.className = "learn-done-xp";
-    xp.textContent = `+${state.learn.correct * 10} XP`;
-    streak.appendChild(xp);
-    done.appendChild(streak);
-
-    const backBtn = document.createElement("button");
-    backBtn.type = "button";
-    backBtn.className = "btn primary full learn-done-back";
-    backBtn.textContent = "Вернуться";
-    backBtn.addEventListener("click", () => navigate("/learn"));
-    done.appendChild(backBtn);
-
-    main.appendChild(done);
+    const doneEl = _buildLearnDone(
+      `${state.learn.correct} из ${total} верно`,
+      state.learn.correct,
+    );
+    main.appendChild(doneEl);
     root.appendChild(main);
     return;
   }
@@ -2451,6 +2427,308 @@ function renderLearnCard() {
   else if (state.learn.feedback === "wrong")
     status.textContent = "правильный вариант подсвечен";
   else status.textContent = "нажми любой вариант";
+  footer.appendChild(status);
+  main.appendChild(footer);
+
+  root.appendChild(main);
+}
+
+// --- M16.7: training (flashcards) --------------------------------------
+// `/learn/flash` is the flip-card session. `state.flash` carries
+// {pool, idx, flipped, correct, done}. The backend contract is
+// identical to the MC mode — GET /training to fill the pool, POST
+// /training/result to score each answer. The difference is purely
+// UI: a 3D flip card with a binary "Знал / Не знал" verdict instead
+// of 4 MC options.
+
+async function _fetchFlashPool() {
+  try {
+    const pool = await apiGet("/api/dictionary/training?limit=10");
+    if (state.view !== "learnFlash") return;
+    setState({
+      flash: {
+        pool: Array.isArray(pool) ? pool : [],
+        idx: 0,
+        flipped: false,
+        correct: 0,
+        done: false,
+      },
+    });
+  } catch (err) {
+    setState({ view: "error", error: err.message });
+  }
+}
+
+function _advanceFlash() {
+  if (state.view !== "learnFlash" || !state.flash) return;
+  const total = state.flash.pool.length;
+  const nextIdx = state.flash.idx + 1;
+  const done = nextIdx >= total;
+  state.flash.idx = nextIdx;
+  state.flash.flipped = false;
+  state.flash.done = done;
+  render();
+}
+
+// Shared "done" screen for MC + flashcards — same ✨ / h1 / soft
+// streak card / "Вернуться" layout, with only the subtitle string
+// varying between modes. Returns a detached <div class="learn-done">
+// ready to append.
+function _buildLearnDone(subtitleText, xpCount) {
+  const done = document.createElement("div");
+  done.className = "learn-done";
+  const emoji = document.createElement("div");
+  emoji.className = "learn-done-emoji";
+  emoji.textContent = "✨";
+  done.appendChild(emoji);
+  const h1 = document.createElement("h1");
+  h1.className = "learn-done-h1";
+  h1.textContent = "Готово!";
+  done.appendChild(h1);
+  const sub = document.createElement("div");
+  sub.className = "learn-done-sub";
+  sub.textContent = subtitleText;
+  done.appendChild(sub);
+
+  // Streak card — placeholder values until M16.8 wires the real data.
+  const streak = document.createElement("div");
+  streak.className = "learn-done-streak";
+  const streakLabel = document.createElement("div");
+  streakLabel.className = "learn-done-streak-label";
+  streakLabel.textContent = "Серия";
+  streak.appendChild(streakLabel);
+  const streakVal = document.createElement("div");
+  streakVal.className = "learn-done-streak-val";
+  streakVal.textContent = "— дней подряд";
+  streak.appendChild(streakVal);
+  const xp = document.createElement("div");
+  xp.className = "learn-done-xp";
+  xp.textContent = `+${xpCount * 10} XP`;
+  streak.appendChild(xp);
+  done.appendChild(streak);
+
+  const backBtn = document.createElement("button");
+  backBtn.type = "button";
+  backBtn.className = "btn primary full learn-done-back";
+  backBtn.textContent = "Вернуться";
+  backBtn.addEventListener("click", () => navigate("/learn"));
+  done.appendChild(backBtn);
+  return done;
+}
+
+function renderLearnFlash() {
+  const root = document.getElementById("root");
+  // Flash session hides the tab bar to match the MC focus mode.
+  hideTabBar();
+
+  if (state.flash === null) {
+    root.innerHTML = `<div class="loader">Loading…</div>`;
+    _fetchFlashPool();
+    return;
+  }
+
+  const pool = state.flash.pool;
+  root.innerHTML = "";
+  const main = document.createElement("main");
+  main.className = "learn-card-screen";
+
+  // Empty-pool branch — no words to train, give the user a way back.
+  if (pool.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "learn-empty";
+    const msg = document.createElement("div");
+    msg.className = "learn-empty-msg";
+    msg.textContent = "Нечего учить, возвращайся позже";
+    empty.appendChild(msg);
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "btn primary full";
+    back.textContent = "Вернуться";
+    back.addEventListener("click", () => navigate("/learn"));
+    empty.appendChild(back);
+    main.appendChild(empty);
+    root.appendChild(main);
+    return;
+  }
+
+  const total = pool.length;
+
+  // Done screen — same shared component as MC, with a flashcards-
+  // specific "Помнил N из M" subtitle.
+  if (state.flash.done || state.flash.idx >= total) {
+    const doneEl = _buildLearnDone(
+      `Помнил ${state.flash.correct} из ${total}`,
+      state.flash.correct,
+    );
+    main.appendChild(doneEl);
+    root.appendChild(main);
+    return;
+  }
+
+  const current = pool[state.flash.idx];
+
+  // Header row — back btn + "n / total" + spacer for symmetry.
+  const header = document.createElement("div");
+  header.className = "learn-header";
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "btn ghost sm learn-back";
+  back.innerHTML = _ICONS.chevL;
+  back.addEventListener("click", () => navigate("/learn"));
+  header.appendChild(back);
+  const counter = document.createElement("div");
+  counter.className = "learn-counter";
+  counter.textContent = `${state.flash.idx + 1} / ${total}`;
+  header.appendChild(counter);
+  const spacer = document.createElement("div");
+  spacer.className = "learn-header-spacer";
+  header.appendChild(spacer);
+  main.appendChild(header);
+
+  // Segmented progress bar.
+  const segs = document.createElement("div");
+  segs.className = "segments";
+  for (let i = 0; i < total; i++) {
+    const seg = document.createElement("div");
+    if (i < state.flash.idx) seg.classList.add("past");
+    else if (i === state.flash.idx) seg.classList.add("current");
+    segs.appendChild(seg);
+  }
+  main.appendChild(segs);
+
+  // Flashcard with two absolutely-positioned faces and a 3D flip.
+  const card = document.createElement("div");
+  card.className = "flashcard" + (state.flash.flipped ? " flipped" : "");
+
+  // Front face — EN lemma + ipa/pos.
+  const front = document.createElement("div");
+  front.className = "fc-front";
+  const frontLbl = document.createElement("div");
+  frontLbl.className = "uplabel";
+  frontLbl.textContent = "Вспомни перевод";
+  front.appendChild(frontLbl);
+  const frontHead = document.createElement("h2");
+  frontHead.className = "fc-headword";
+  frontHead.textContent = current.lemma;
+  front.appendChild(frontHead);
+  if (current.ipa || current.pos) {
+    const meta = document.createElement("div");
+    meta.className = "fc-ipa";
+    const bits = [];
+    if (current.ipa) bits.push(current.ipa);
+    if (current.pos) bits.push(current.pos);
+    meta.textContent = bits.join(" · ");
+    front.appendChild(meta);
+  }
+  card.appendChild(front);
+
+  // Back face — RU translation + example (lemma bolded) + source.
+  const backFace = document.createElement("div");
+  backFace.className = "fc-back";
+  const backLbl = document.createElement("div");
+  backLbl.className = "uplabel";
+  backLbl.textContent = "Перевод";
+  backFace.appendChild(backLbl);
+  const backHead = document.createElement("h2");
+  backHead.className = "fc-headword";
+  backHead.textContent = current.translation || "";
+  backFace.appendChild(backHead);
+
+  if (current.example) {
+    const ex = document.createElement("div");
+    ex.className = "fc-example";
+    const text = String(current.example);
+    const lemma = current.lemma || "";
+    const lower = text.toLowerCase();
+    const pos = lemma ? lower.indexOf(lemma.toLowerCase()) : -1;
+    ex.appendChild(document.createTextNode('"'));
+    if (pos >= 0 && lemma) {
+      ex.appendChild(document.createTextNode(text.slice(0, pos)));
+      const b = document.createElement("b");
+      b.setAttribute("style", "color:var(--accent)");
+      b.textContent = text.slice(pos, pos + lemma.length);
+      ex.appendChild(b);
+      ex.appendChild(document.createTextNode(text.slice(pos + lemma.length)));
+    } else {
+      ex.appendChild(document.createTextNode(text));
+    }
+    ex.appendChild(document.createTextNode('"'));
+    backFace.appendChild(ex);
+  }
+
+  const src = document.createElement("div");
+  src.className = "fc-source";
+  if (current.source_book && current.source_book.title) {
+    src.textContent = current.source_book.title;
+  } else if (current.source_book_id != null) {
+    src.textContent = `Книга #${current.source_book_id}`;
+  } else {
+    src.textContent = "—";
+  }
+  backFace.appendChild(src);
+  card.appendChild(backFace);
+  main.appendChild(card);
+
+  // Actions — before flip: single "Показать перевод" primary button.
+  // After flip: two-button row (ghost "Не знал" + primary "Знал").
+  const actions = document.createElement("div");
+  actions.className = "flash-actions";
+  if (!state.flash.flipped) {
+    const reveal = document.createElement("button");
+    reveal.type = "button";
+    reveal.className = "btn primary full";
+    reveal.textContent = "Показать перевод";
+    reveal.addEventListener("click", () => {
+      if (!state.flash || state.flash.flipped) return;
+      state.flash.flipped = true;
+      render();
+    });
+    actions.appendChild(reveal);
+  } else {
+    const row = document.createElement("div");
+    row.className = "flash-verdict-row";
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "btn ghost";
+    no.style.flex = "1";
+    no.textContent = "Не знал";
+    no.addEventListener("click", () => {
+      if (!state.flash || !state.flash.flipped) return;
+      _postTrainingResult(current.lemma, false);
+      _advanceFlash();
+    });
+    row.appendChild(no);
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "btn primary";
+    yes.style.flex = "1";
+    yes.textContent = "Знал";
+    yes.addEventListener("click", () => {
+      if (!state.flash || !state.flash.flipped) return;
+      state.flash.correct += 1;
+      _postTrainingResult(current.lemma, true);
+      _advanceFlash();
+    });
+    row.appendChild(yes);
+    actions.appendChild(row);
+  }
+  main.appendChild(actions);
+
+  // Footer — skip link + status text (mirrors MC).
+  const footer = document.createElement("div");
+  footer.className = "learn-footer";
+  const skip = document.createElement("span");
+  skip.className = "learn-skip";
+  skip.textContent = "Пропустить";
+  skip.addEventListener("click", () => {
+    if (!state.flash) return;
+    _advanceFlash();
+  });
+  footer.appendChild(skip);
+
+  const status = document.createElement("span");
+  status.className = "learn-status";
+  status.textContent = state.flash.flipped ? "нажми что помнишь" : "перевод скрыт";
   footer.appendChild(status);
   main.appendChild(footer);
 
@@ -2962,6 +3240,7 @@ function render() {
     case "catalog": return renderCatalog();
     case "learnHome": return renderLearnHome();
     case "learnCard": return renderLearnCard();
+    case "learnFlash": return renderLearnFlash();
     case "loading": return renderLoading();
     case "error": return renderError();
     default: return renderError();
