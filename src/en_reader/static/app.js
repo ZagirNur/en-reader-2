@@ -48,6 +48,15 @@ const state = {
   // skeleton card that renders in the library grid just before the
   // `.add-card` tile. Null when no upload is in flight.
   uploadingFilename: null,
+  // M16.4: dictionary screen state. `dictWords` is the last-fetched list
+  // of entries from `/api/dictionary/words`; `null` means "not fetched
+  // yet", `[]` is the valid loaded-and-empty state. `dictStats` mirrors
+  // `/api/dictionary/stats`. `dictFilter` is the currently-active chip
+  // id ("all" | "review" | "learning" | "new" | "mastered"); changing
+  // it triggers a refetch.
+  dictWords: null,
+  dictStats: null,
+  dictFilter: "all",
 };
 
 // Reader scroll state (M9.3). Kept at module scope so we can detach the
@@ -156,6 +165,8 @@ function parseRoute(path) {
   // signup/login toggle is driven by state.authMode so both paths map to
   // a single view and the UI switch button is the canonical mode driver.
   if (path === "/login" || path === "/signup") return { view: "login" };
+  // M16.4: dictionary screen. Tab bar's "dict" tab routes here.
+  if (path === "/dict") return { view: "dictionary" };
   const m = BOOK_ROUTE_RE.exec(path);
   if (m) return { view: "reader", bookId: Number(m[1]) };
   return { view: "error" };
@@ -175,6 +186,12 @@ function navigate(path) {
   if (state.view === "library" && parsed.view !== "library") {
     patch.books = undefined;
   }
+  // M16.4: leaving the dictionary screen drops its caches so a revisit
+  // refetches (counters could have changed mid-session).
+  if (state.view === "dictionary" && parsed.view !== "dictionary") {
+    patch.dictWords = null;
+    patch.dictStats = null;
+  }
   setState(patch);
 }
 
@@ -189,6 +206,10 @@ function onPopState() {
   }
   if (state.view === "library" && parsed.view !== "library") {
     patch.books = undefined;
+  }
+  if (state.view === "dictionary" && parsed.view !== "dictionary") {
+    patch.dictWords = null;
+    patch.dictStats = null;
   }
   setState(patch);
 }
@@ -333,6 +354,12 @@ function renderLibrary() {
   showTabBar();
   renderTabBar("lib", (id) => {
     if (id === "lib") return;
+    // M16.4: dictionary tab wired up — other tabs still land in toast-
+    // land until M16.5 / M16.6 ship their screens.
+    if (id === "dict") {
+      navigate("/dict");
+      return;
+    }
     showToast("Скоро");
   });
 
@@ -1381,6 +1408,361 @@ async function loadAbove() {
   }
 }
 
+// --- M16.4: dictionary screen -----------------------------------------
+// Chip ids map 1:1 to the `status` query on /api/dictionary/words so the
+// filter row can stay a single source of truth. Label + stats-key are
+// paired with the id so the render loop doesn't need a parallel lookup.
+const _DICT_FILTERS = [
+  { id: "all", label: "Все", statKey: "total" },
+  { id: "review", label: "Повторить", statKey: "review" },
+  { id: "learning", label: "Учу", statKey: "learning" },
+  { id: "new", label: "Новые", statKey: "new" },
+  { id: "mastered", label: "Выучено", statKey: "mastered" },
+];
+
+// Per-status badge presentation. Kept as a JS constant (rather than CSS
+// classes) so the colour values — which the spec pins to specific hex
+// codes, including the `#c9a253` mustard — live in one place the sheet
+// and list-card can both read from. Dark-theme override is inlined as
+// a second map and merged in at render time based on the <html> class.
+const _DICT_BADGES = {
+  new: { bg: "var(--accent)", color: "#fff", label: "новое" },
+  learning: { bg: "var(--soft)", color: "var(--ink)", label: "учу" },
+  review: { bg: "#c9a253", color: "#2d1a12", label: "повторить" },
+  mastered: { bg: "#d8e0c0", color: "#2a3f14", label: "выучено" },
+};
+const _DICT_BADGES_DARK = {
+  mastered: { bg: "#2a3f24", color: "#c5d5a0" },
+};
+
+function _badgeStyle(status) {
+  const base = _DICT_BADGES[status] || _DICT_BADGES.new;
+  const isDark = document.documentElement.classList.contains("dark");
+  const override = isDark ? _DICT_BADGES_DARK[status] : null;
+  return {
+    bg: (override && override.bg) || base.bg,
+    color: (override && override.color) || base.color,
+    label: base.label,
+  };
+}
+
+function _applyBadge(el, status) {
+  const s = _badgeStyle(status);
+  el.className = "badge";
+  el.textContent = s.label;
+  el.style.backgroundColor = s.bg;
+  el.style.color = s.color;
+}
+
+// Fetch /stats + /words in parallel and stash them on state.
+async function _fetchDictionary(filter) {
+  try {
+    const [stats, words] = await Promise.all([
+      apiGet("/api/dictionary/stats"),
+      apiGet(`/api/dictionary/words?status=${encodeURIComponent(filter)}`),
+    ]);
+    if (state.view !== "dictionary") return;
+    setState({
+      dictStats: stats,
+      dictWords: Array.isArray(words) ? words : [],
+    });
+  } catch (err) {
+    setState({ view: "error", error: err.message });
+  }
+}
+
+function renderDictionary() {
+  const root = document.getElementById("root");
+
+  // Show the tab bar and paint "dict" as active. Clicking the other tabs
+  // either navigates (lib) or toasts "Скоро" until later milestones ship
+  // their screens.
+  showTabBar();
+  renderTabBar("dict", (id) => {
+    if (id === "dict") return;
+    if (id === "lib") {
+      navigate("/");
+      return;
+    }
+    showToast("Скоро");
+  });
+
+  // First entry (or revisit after leaving) — kick off the fetch. A null
+  // dictWords is the "not fetched" signal; [] means loaded-and-empty.
+  if (state.dictWords === null || state.dictStats === null) {
+    root.innerHTML = `<div class="loader">Loading…</div>`;
+    _fetchDictionary(state.dictFilter);
+    return;
+  }
+
+  root.innerHTML = "";
+  const main = document.createElement("main");
+  main.className = "dictionary";
+
+  // Header.
+  const header = document.createElement("div");
+  header.className = "dict-header";
+  const h1 = document.createElement("h1");
+  h1.textContent = "Словарь";
+  header.appendChild(h1);
+  const counter = document.createElement("span");
+  counter.className = "counter";
+  const total = (state.dictStats && state.dictStats.total) || 0;
+  counter.textContent = `${total} слов`;
+  header.appendChild(counter);
+  main.appendChild(header);
+
+  // Stats (3-col grid).
+  const stats = document.createElement("div");
+  stats.className = "dict-stats";
+  const statItems = [
+    { n: state.dictStats.review_today || 0, label: "Повт. / сегодня", cls: "review" },
+    { n: state.dictStats.active || 0, label: "Учу сейчас", cls: "" },
+    { n: state.dictStats.mastered || 0, label: "Выучено", cls: "" },
+  ];
+  for (const s of statItems) {
+    const stat = document.createElement("div");
+    stat.className = "stat";
+    const n = document.createElement("div");
+    n.className = "n" + (s.cls ? ` ${s.cls}` : "");
+    n.textContent = String(s.n);
+    const lbl = document.createElement("div");
+    lbl.className = "lbl";
+    lbl.textContent = s.label;
+    stat.appendChild(n);
+    stat.appendChild(lbl);
+    stats.appendChild(stat);
+  }
+  main.appendChild(stats);
+
+  // Filter chips.
+  const filters = document.createElement("div");
+  filters.className = "dict-filters";
+  for (const f of _DICT_FILTERS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (state.dictFilter === f.id ? " on" : "");
+    chip.dataset.filterId = f.id;
+    // Label + "N" count in a sibling span so the `.chip .n` CSS (opacity)
+    // can dim the count without affecting the label.
+    chip.appendChild(document.createTextNode(f.label));
+    const cnt = document.createElement("span");
+    cnt.className = "n";
+    const c = (state.dictStats && state.dictStats[f.statKey]) || 0;
+    cnt.textContent = String(c);
+    chip.appendChild(cnt);
+    chip.addEventListener("click", () => {
+      if (state.dictFilter === f.id) return;
+      // Clear words so the loader branch re-fetches with the new filter.
+      state.dictFilter = f.id;
+      state.dictWords = null;
+      render();
+    });
+    filters.appendChild(chip);
+  }
+  main.appendChild(filters);
+
+  // Word list (or empty state).
+  const words = state.dictWords || [];
+  if (words.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "dict-empty";
+    if (state.dictFilter === "all") {
+      empty.textContent = "Здесь пока пусто";
+    } else {
+      const f = _DICT_FILTERS.find((x) => x.id === state.dictFilter);
+      empty.textContent = f ? `Нет слов со статусом «${f.label}»` : "Здесь пока пусто";
+    }
+    main.appendChild(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "dict-list";
+    for (const w of words) {
+      list.appendChild(_buildWordItem(w));
+    }
+    main.appendChild(list);
+  }
+
+  root.appendChild(main);
+}
+
+function _buildWordItem(word) {
+  const item = document.createElement("div");
+  item.className = "word-item";
+  item.dataset.lemma = word.lemma || "";
+
+  const lhs = document.createElement("div");
+  lhs.className = "lhs";
+
+  const headLine = document.createElement("div");
+  headLine.className = "head-line";
+  const head = document.createElement("span");
+  head.className = "head";
+  head.textContent = word.lemma || "";
+  headLine.appendChild(head);
+  if (word.translation) {
+    const tr = document.createElement("span");
+    tr.className = "tr";
+    tr.textContent = `— ${word.translation}`;
+    headLine.appendChild(tr);
+  }
+  lhs.appendChild(headLine);
+
+  if (word.example) {
+    const ex = document.createElement("div");
+    ex.className = "ex";
+    // Trim whitespace and wrap in quote marks per spec prototype.
+    const trimmed = String(word.example).trim();
+    ex.textContent = trimmed ? `«${trimmed}»` : "";
+    lhs.appendChild(ex);
+  }
+
+  const metaParts = [];
+  const sourceTitle =
+    word.source_book && word.source_book.title ? word.source_book.title : null;
+  if (sourceTitle) metaParts.push(sourceTitle);
+  if (word.days_since_review != null) {
+    metaParts.push(`${word.days_since_review} дн.`);
+  }
+  if (metaParts.length) {
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = metaParts.join(" · ");
+    lhs.appendChild(meta);
+  }
+
+  item.appendChild(lhs);
+
+  const badge = document.createElement("span");
+  _applyBadge(badge, word.status || "new");
+  item.appendChild(badge);
+
+  item.addEventListener("click", () => {
+    openSheet(buildWordDetailSheet(word));
+  });
+
+  return item;
+}
+
+function buildWordDetailSheet(word) {
+  const content = document.createElement("div");
+  content.setAttribute("role", "dialog");
+
+  const headword = document.createElement("div");
+  headword.className = "sheet-headword";
+  headword.textContent = word.lemma || "";
+  content.appendChild(headword);
+
+  const meta = document.createElement("div");
+  meta.className = "sheet-meta";
+  // IPA / POS land here in M17 — for now the spec asks for "— · —".
+  const ipa = word.ipa || "—";
+  const pos = word.pos || "—";
+  meta.textContent = `${ipa} · ${pos}`;
+  content.appendChild(meta);
+
+  const tCard = document.createElement("div");
+  tCard.className = "sheet-card sheet-translation";
+  tCard.textContent = word.translation || "";
+  content.appendChild(tCard);
+
+  // "Из книги · <title>" section — only rendered when we know the source
+  // book (words added before M16.3 have source_book=null).
+  if (word.source_book && word.source_book.title) {
+    const fromBook = document.createElement("div");
+    fromBook.className = "sheet-from-book";
+    const uplabel = document.createElement("div");
+    uplabel.className = "uplabel";
+    uplabel.textContent = `Из книги · ${word.source_book.title}`;
+    fromBook.appendChild(uplabel);
+
+    if (word.example) {
+      const sentWrap = document.createElement("div");
+      sentWrap.className = "sheet-from-book-text";
+      const example = String(word.example);
+      const translation = word.translation || "";
+      // Case-insensitive find of the lemma OR translation token in the
+      // example so we can bold it in accent colour per spec.
+      let bolded = false;
+      if (translation) {
+        const idx = example.indexOf(translation);
+        if (idx >= 0) {
+          sentWrap.appendChild(document.createTextNode(example.slice(0, idx)));
+          const b = document.createElement("b");
+          b.setAttribute("style", "color:var(--accent)");
+          b.textContent = translation;
+          sentWrap.appendChild(b);
+          sentWrap.appendChild(
+            document.createTextNode(example.slice(idx + translation.length)),
+          );
+          bolded = true;
+        }
+      }
+      if (!bolded && word.lemma) {
+        const lemma = word.lemma;
+        const lower = example.toLowerCase();
+        const pos = lower.indexOf(lemma.toLowerCase());
+        if (pos >= 0) {
+          sentWrap.appendChild(document.createTextNode(example.slice(0, pos)));
+          const b = document.createElement("b");
+          b.setAttribute("style", "color:var(--accent)");
+          b.textContent = example.slice(pos, pos + lemma.length);
+          sentWrap.appendChild(b);
+          sentWrap.appendChild(
+            document.createTextNode(example.slice(pos + lemma.length)),
+          );
+          bolded = true;
+        }
+      }
+      if (!bolded) {
+        sentWrap.textContent = example;
+      }
+      fromBook.appendChild(sentWrap);
+    }
+    content.appendChild(fromBook);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "sheet-actions";
+
+  const primary = document.createElement("button");
+  primary.className = "btn primary";
+  primary.textContent = "Тренировать";
+  primary.addEventListener("click", () => {
+    // M16.6 ships /learn/card; navigating there now will route to the
+    // error view via parseRoute's fallthrough, which is acceptable — the
+    // sheet still closes via scrim / Esc and the user hasn't lost state.
+    closeSheet();
+    navigate(
+      `/learn/card?from=dict&lemma=${encodeURIComponent(word.lemma || "")}`,
+    );
+  });
+  actions.appendChild(primary);
+
+  const ghost = document.createElement("button");
+  ghost.className = "btn ghost";
+  ghost.textContent = "Удалить";
+  ghost.addEventListener("click", async () => {
+    if (!word.lemma) return;
+    try {
+      await apiDelete(`/api/dictionary/${encodeURIComponent(word.lemma)}`);
+    } catch (_e) {
+      showToast("Не удалось удалить");
+      return;
+    }
+    closeSheet();
+    showToast("Удалено");
+    // Refetch both lists: /stats counters and /words for the current filter.
+    state.dictWords = null;
+    state.dictStats = null;
+    if (state.view === "dictionary") _fetchDictionary(state.dictFilter);
+  });
+  actions.appendChild(ghost);
+
+  content.appendChild(actions);
+  return content;
+}
+
 function renderLoading() {
   hideTabBar();
   document.getElementById("root").innerHTML = `<div class="loader">Loading…</div>`;
@@ -1882,6 +2264,7 @@ function render() {
     case "library": return renderLibrary();
     case "reader": return renderReader();
     case "login": return renderLogin();
+    case "dictionary": return renderDictionary();
     case "loading": return renderLoading();
     case "error": return renderError();
     default: return renderError();
