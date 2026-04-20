@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+class UnsupportedFormatError(Exception):
+    """Raised when a parser cannot make sense of the input bytes."""
+
+
 @dataclass
 class ParsedImage:
     """An image blob extracted (or injected) alongside the book text."""
