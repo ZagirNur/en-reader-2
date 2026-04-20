@@ -1,11 +1,16 @@
 # en-reader Caddyfile (M17.5).
 #
-# Production config for enreader.zagirnur.dev. Caddy grabs a Let's
-# Encrypt cert via the HTTP-01 challenge on :80, then reverse-proxies
-# all traffic to the uvicorn worker on 127.0.0.1:8080. uvicorn itself
-# never binds a public port — UFW doesn't need to (and doesn't) open
-# :8080 at all.
-enreader.zagirnur.dev {
+# Cloudflare terminates TLS in front of the origin and proxies to us
+# over HTTP (port 80). Caddy here is a plain-HTTP reverse proxy to the
+# uvicorn worker on 127.0.0.1:8080 — no auto-TLS, no HTTPS listener,
+# no HTTP→HTTPS redirect (which would loop through Cloudflare). HSTS
+# and the rest of the security headers are set here too so they travel
+# through CF untouched.
+{
+  auto_https off
+}
+
+:80 {
   reverse_proxy 127.0.0.1:8080
   encode gzip
   header {
