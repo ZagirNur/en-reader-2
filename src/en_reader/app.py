@@ -183,8 +183,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 #   * Google Fonts — ``index.html`` loads the Geist family from
 #     ``fonts.googleapis.com`` (stylesheet) + ``fonts.gstatic.com`` (the
 #     actual font files) since M3.3.
-# ``frame-ancestors 'none'`` is the modern replacement for XFO=DENY —
-# we still send both because some corporate proxies strip one or the other.
+# ``frame-ancestors`` is the modern replacement for XFO. M18.1: allow the
+# Telegram web clients to embed us so the Mini App iframe renders in
+# Telegram Web / Desktop. Native mobile Telegram uses a WebView (no
+# iframe) and is unaffected by either this or XFO. We drop XFO entirely
+# since it has no multi-origin mode — any browser modern enough to be
+# running Telegram's web client also supports frame-ancestors.
 _CSP = (
     "default-src 'self'; "
     "img-src 'self' data: https://t.me; "
@@ -192,7 +196,7 @@ _CSP = (
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "script-src 'self' https://telegram.org; "
     "font-src 'self' https://fonts.gstatic.com; "
-    "frame-ancestors 'none'"
+    "frame-ancestors 'self' https://web.telegram.org https://telegram.org"
 )
 
 
@@ -208,7 +212,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         resp = await call_next(request)
         resp.headers["Content-Security-Policy"] = _CSP
         resp.headers["X-Content-Type-Options"] = "nosniff"
-        resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "same-origin"
         resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return resp
@@ -278,13 +281,20 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Starlette's SessionMiddleware always sets HttpOnly internally (the JS
 # side has no business reading this cookie), so no ``http_only`` kwarg
 # is needed or accepted on current Starlette versions.
+# M18.1: in prod use ``SameSite=None`` so the cookie round-trips through
+# the Telegram Mini App iframe (Telegram Web/Desktop embeds us cross-site,
+# and ``Lax`` cookies are stripped from fetches made inside a third-party
+# iframe). ``None`` requires ``Secure``, which is already on in prod via
+# ``https_only``. Dev keeps ``Lax`` because ``None`` without ``Secure`` is
+# rejected outright by modern browsers.
+_IS_PROD = os.getenv("ENV") == "prod"
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
     session_cookie="sess",
     max_age=60 * 60 * 24 * 30,  # 30 days
-    same_site="lax",
-    https_only=os.getenv("ENV") == "prod",
+    same_site="none" if _IS_PROD else "lax",
+    https_only=_IS_PROD,
 )
 app.add_middleware(OriginCheckMiddleware)
 # ProxyHeadersMiddleware goes on *last* so, in the reverse-order inbound
