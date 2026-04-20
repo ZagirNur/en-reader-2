@@ -1,0 +1,12 @@
+[Unit]
+Description=en-reader autopull (M13.2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root so we can systemctl restart and daemon-reload. Git
+# operations inside autopull.sh drop privileges to the `enreader` user via
+# `sudo -u`.
+User=root
+ExecStart=/opt/en-reader/deploy/autopull.sh

@@ -74,12 +74,19 @@ EOF
   chmod 600 "$APP_HOME/.env"
 fi
 
-# 7. systemd unit.
+# 7. systemd units (service + autopull timer from M13.2).
 install -m 0644 "$APP_HOME/deploy/en-reader.service" \
   /etc/systemd/system/en-reader.service
+install -m 0644 "$APP_HOME/deploy/en-reader-autopull.service" \
+  /etc/systemd/system/en-reader-autopull.service
+install -m 0644 "$APP_HOME/deploy/en-reader-autopull.timer" \
+  /etc/systemd/system/en-reader-autopull.timer
+chmod +x "$APP_HOME/deploy/autopull.sh"
 systemctl daemon-reload
 systemctl enable en-reader
 systemctl restart en-reader
+systemctl enable en-reader-autopull.timer
+systemctl start en-reader-autopull.timer
 
 # 8. Firewall — SSH must go up BEFORE enabling ufw or we lock ourselves out.
 ufw allow 22/tcp

@@ -77,11 +77,43 @@ sudo systemctl restart en-reader
   enabling ufw. If you still lose access, use the hosting provider's web
   console to run `sudo ufw disable`.
 
+## Autopull (M13.2)
+
+Installed by `bootstrap.sh` automatically. A systemd timer runs
+`deploy/autopull.sh` every ~10 s (30 s after boot). The script is silent
+when `origin/main` hasn't moved and only logs to journal on real deploys.
+
+On a new commit it:
+
+1. `git fetch` → diff HEAD vs `origin/main`; exit 0 if equal.
+2. `git merge --ff-only` (fails loudly on local edits — there shouldn't be
+   any on the VPS).
+3. If `pyproject.toml` changed: `pip install -e .` inside the venv.
+4. If any of `en-reader.service`, `en-reader-autopull.service`,
+   `en-reader-autopull.timer` changed: copy to `/etc/systemd/system/` and
+   `systemctl daemon-reload`.
+5. `systemctl restart en-reader`.
+6. Writes the new SHA to `/tmp/en-reader-last-deploy.txt` (consumed by
+   M13.3's Telegram notify).
+
+Watch the timer and recent runs:
+
+```
+systemctl list-timers en-reader-autopull.timer
+journalctl -u en-reader-autopull -n 50
+```
+
+To pause autopull while debugging on the box:
+
+```
+sudo systemctl stop en-reader-autopull.timer
+# ... poke around ...
+sudo systemctl start en-reader-autopull.timer
+```
+
 ## Scope
 
-M13.1 covers only the first-boot plumbing. Follow-up tasks:
-
-- **M13.2** — unattended `git pull` + restart on a schedule.
-- **M13.3** — Telegram notifications on deploy / crash.
+- **M13.3** — Telegram notifications on deploy / crash (reads
+  `/tmp/en-reader-last-deploy.txt`).
 - **M13.4** — Let's Encrypt TLS termination in front of uvicorn (or on :443
   with the same capability trick).
