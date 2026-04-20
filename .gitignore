@@ -33,3 +33,8 @@ src/en_reader/static/demo.json
 # Book covers land with the real parsers in M12; ignore the directory now so
 # future seeds don't leak files into the working tree.
 data/covers/
+
+# pytest-cov (M15.1) drops .coverage in CWD on every run.
+.coverage
+.coverage.*
+htmlcov/
