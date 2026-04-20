@@ -142,7 +142,7 @@ def test_migration_preserves_data(
             f"before={before_count}, after={after_count}"
         )
 
-    assert _schema_version(dst) == "9"
+    assert _schema_version(dst) == "10"
 
     # v4→v5 specifics: the seed user exists (exactly once) and the
     # books table grew a ``user_id`` column.
@@ -189,7 +189,7 @@ def test_migrate_from_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     storage._reset_for_tests()
 
     assert dst.exists()
-    assert _schema_version(dst) == "9"
+    assert _schema_version(dst) == "10"
 
     # Every table introduced across the migration chain is present.
     conn = sqlite3.connect(str(dst))
@@ -210,5 +210,6 @@ def test_migrate_from_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         "reading_progress",
         "catalog_books",
         "daily_activity",
+        "link_tokens",
     ):
         assert expected in tables, f"Missing table after migrate(): {expected}"
