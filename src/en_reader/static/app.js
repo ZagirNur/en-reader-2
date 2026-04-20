@@ -1,5 +1,26 @@
-// en-reader SPA (M3.3 + M4.2): state + router + reader render + inline translation.
+// en-reader SPA (M3.3 + M4.2 + M16.2): state + router + reader render +
+// inline translation + shared sheet/toast/tabbar components.
 // XSS discipline: any text from API responses goes via document.createTextNode / textContent only.
+
+// --- M16.2: icons (SVG string literals from tasks/_assets/design/prototype.html) ---
+// These are static, trusted markup — the whole reason we use innerHTML for
+// them. User-facing text (labels, messages) always flows through textContent.
+const _ICONS = {
+  books: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V4H6.5A2.5 2.5 0 0 0 4 6.5v13Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 22H20v-5"/></svg>',
+  compass: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5.5-5.5 2 2-5.5 5.5-2Z"/></svg>',
+  dict: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4V4Z"/><path d="M4 16a4 4 0 0 1 4-4h11"/></svg>',
+  brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-2 2.8V13a3 3 0 0 0 2 2.8V17a3 3 0 0 0 3 3h.5V4H9Z"/><path d="M15 4a3 3 0 0 1 3 3v1a3 3 0 0 1 2 2.8V13a3 3 0 0 1-2 2.8V17a3 3 0 0 1-3 3h-.5V4H15Z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  chevL: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>',
+  chevR: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+  star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.9 6.2 20.95l1.1-6.5L2.6 9.85l6.5-.95L12 3Z"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11a6 6 0 0 1 0 12H8"/><path d="m7 3-4 4 4 4"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10"/><path d="M4 12h6"/><path d="M4 17h12"/><circle cx="18" cy="7" r="2"/><circle cx="14" cy="12" r="2"/><circle cx="20" cy="17" r="2"/></svg>',
+  x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  fire: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1.5 3 3.5 4.5 3.5 7.5 0 2-1.5 3.5-3.5 3.5-1 0-2-.5-2-2 0-1 .5-1.5.5-2.5-2 1-3.5 3-3.5 5.5 0 3 2.5 5.5 5.5 5.5s5.5-2.5 5.5-5.5c0-5-3-7-6-12Z"/></svg>',
+  trend: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 5-5 4 4 8-8"/><path d="M15 8h5v5"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12 5 5 11-11"/></svg>',
+};
 
 // --- state ---
 const state = {
@@ -304,6 +325,16 @@ function showCardMenu(cardEl, bookId) {
 
 function renderLibrary() {
   const root = document.getElementById("root");
+
+  // M16.2: library view owns the tab bar — show it here and paint the
+  // "Мои книги" tab as active. The other tabs don't have destination
+  // screens until M16.4/.5/.6, so for now we surface a "coming soon"
+  // toast rather than navigate into a broken state.
+  showTabBar();
+  renderTabBar("lib", (id) => {
+    if (id === "lib") return;
+    showToast("Скоро");
+  });
 
   // Kick off the fetch on first entry. `state.books === undefined` means
   // "never fetched"; an explicit [] is a valid loaded-and-empty state.
@@ -919,6 +950,8 @@ async function restoreScroll() {
 
 function renderReader() {
   const root = document.getElementById("root");
+  // M16.2: reader uses the full viewport — tab bar is hidden here.
+  hideTabBar();
   if (state.currentBook === null) {
     // Derive bookId from the current route (default 1 for legacy /reader).
     const parsed = parseRoute(state.route);
@@ -1349,10 +1382,12 @@ async function loadAbove() {
 }
 
 function renderLoading() {
+  hideTabBar();
   document.getElementById("root").innerHTML = `<div class="loader">Loading…</div>`;
 }
 
 function renderError() {
+  hideTabBar();
   const root = document.getElementById("root");
   root.innerHTML = "";
   const box = document.createElement("div");
@@ -1386,6 +1421,7 @@ function authErrorMessage(status, mode) {
 }
 
 function renderLogin() {
+  hideTabBar();
   const root = document.getElementById("root");
   root.innerHTML = "";
 
@@ -1582,46 +1618,176 @@ function revertTranslation(lemma) {
   });
 }
 
-// --- bottom sheet (M4.2 minimal; M16.2 later) ---
+// --- M16.2: canonical shared components (sheet + scrim + tabbar) ---
+// The #sheet / #scrim / #toast / #tabbar shells live in index.html. We
+// lazy-mount them here as a fallback so unit tests (or any downstream
+// markup drift) still get a working component instead of throwing.
+function _ensureSheetShells() {
+  let scrim = document.getElementById("scrim");
+  if (!scrim) {
+    scrim = document.createElement("div");
+    scrim.className = "scrim";
+    scrim.id = "scrim";
+    document.body.appendChild(scrim);
+  }
+  let sheet = document.getElementById("sheet");
+  if (!sheet) {
+    sheet = document.createElement("div");
+    sheet.className = "sheet";
+    sheet.id = "sheet";
+    document.body.appendChild(sheet);
+  }
+  if (!scrim._mgmtBound) {
+    scrim.addEventListener("click", closeSheet);
+    scrim._mgmtBound = true;
+  }
+  return { scrim, sheet };
+}
+
+// Open a bottom sheet with arbitrary content. The caller owns what goes
+// inside; this function only manages the container, the handle pill, and
+// the show/hide classes. Double-rAF so the browser commits the initial
+// (untransformed) style before the transition target class lands.
+function openSheet(contentEl) {
+  const { scrim, sheet } = _ensureSheetShells();
+  sheet.innerHTML = "";
+  const handle = document.createElement("div");
+  handle.className = "handle";
+  sheet.appendChild(handle);
+  if (contentEl) sheet.appendChild(contentEl);
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      scrim.classList.add("show");
+      sheet.classList.add("show");
+    }),
+  );
+}
+
 function closeSheet() {
-  document.querySelectorAll(".sheet-backdrop, .sheet").forEach((n) => n.remove());
-  document.removeEventListener("keydown", onSheetKeydown);
+  const scrim = document.getElementById("scrim");
+  const sheet = document.getElementById("sheet");
+  if (scrim) scrim.classList.remove("show");
+  if (sheet) sheet.classList.remove("show");
+  // Legacy M4.2 ad-hoc sheets (if any still-in-flight caller kept the old
+  // `.sheet-backdrop` path around). Harmless no-op under the canonical path.
+  document.querySelectorAll(".sheet-backdrop").forEach((n) => n.remove());
 }
 
-function onSheetKeydown(e) {
+// Press Escape → close the canonical sheet. Installed once at module load
+// so we don't leak per-open listeners.
+document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeSheet();
+});
+
+// M16.2: canonical toast. 1.6 s auto-hide. Uses the shared #toast shell
+// (lazy-mounted if missing) and a module-level timer handle so back-to-
+// back calls reset the countdown instead of stacking.
+let _toastTimer = null;
+function showToast(msg) {
+  let t = document.getElementById("toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.className = "toast";
+    t.id = "toast";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add("show");
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => {
+    t.classList.remove("show");
+    _toastTimer = null;
+  }, 1600);
 }
 
-function openWordSheet(span) {
-  closeSheet(); // ensure only one open at a time
+// Back-compat alias — every existing M4.2 / M9.2 callsite still says
+// `toast("...")`. Preserving the name avoids a coordinated rename across
+// uploadBook / translateAndReplace / card-menu / bottom sheet.
+const toast = showToast;
 
+// M16.2: tab bar. Four tabs, icon + label + "on" dot on the active one.
+// Caller supplies the active id and a click handler — the bar itself has
+// no opinion about routing, so M16.4/.5/.6 can wire screens as they land.
+const _TABS = [
+  { id: "lib", label: "Мои книги", icon: _ICONS.books },
+  { id: "cat", label: "Каталог", icon: _ICONS.compass },
+  { id: "dict", label: "Словарь", icon: _ICONS.dict },
+  { id: "learn", label: "Учить", icon: _ICONS.brain },
+];
+
+function renderTabBar(activeId, onTabClick) {
+  let bar = document.getElementById("tabbar");
+  if (!bar) {
+    bar = document.createElement("nav");
+    bar.className = "tabbar";
+    bar.id = "tabbar";
+    bar.setAttribute("aria-label", "Tabs");
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = "";
+  for (const t of _TABS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tab" + (activeId === t.id ? " on" : "");
+    b.dataset.tabId = t.id;
+    // Icon is trusted static SVG → innerHTML; label text is a literal
+    // constant → still goes through textContent on its own <span> so a
+    // future i18n table can't leak markup.
+    const iconSpan = document.createElement("span");
+    iconSpan.className = "tab-icon";
+    iconSpan.innerHTML = t.icon;
+    b.appendChild(iconSpan);
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = t.label;
+    b.appendChild(labelSpan);
+    if (activeId === t.id) {
+      const dot = document.createElement("span");
+      dot.className = "tab-dot";
+      b.appendChild(dot);
+    }
+    b.addEventListener("click", () => {
+      if (typeof onTabClick === "function") onTabClick(t.id);
+    });
+    bar.appendChild(b);
+  }
+}
+
+function hideTabBar() {
+  const bar = document.getElementById("tabbar");
+  if (bar) bar.classList.add("hidden");
+  document.body.classList.remove("with-tabbar");
+}
+
+function showTabBar() {
+  const bar = document.getElementById("tabbar");
+  if (bar) bar.classList.remove("hidden");
+  document.body.classList.add("with-tabbar");
+}
+
+// --- M4.2 word-sheet, now driven by the canonical openSheet shell. ---
+function openWordSheet(span) {
   const lemma = span.dataset.lemma;
   const original = span.dataset.originalText ?? span.textContent;
   const ruText = span.textContent;
   const sentenceText = getSentenceFor(span);
 
-  const backdrop = document.createElement("div");
-  backdrop.className = "sheet-backdrop";
-  backdrop.addEventListener("click", closeSheet);
-
-  const sheet = document.createElement("div");
-  sheet.className = "sheet";
-  sheet.setAttribute("role", "dialog");
+  const content = document.createElement("div");
+  content.setAttribute("role", "dialog");
 
   const headword = document.createElement("div");
   headword.className = "sheet-headword";
   headword.textContent = original;
-  sheet.appendChild(headword);
+  content.appendChild(headword);
 
   const meta = document.createElement("div");
   meta.className = "sheet-meta";
   meta.textContent = "— · —";
-  sheet.appendChild(meta);
+  content.appendChild(meta);
 
   const tCard = document.createElement("div");
   tCard.className = "sheet-card sheet-translation";
   tCard.textContent = ruText;
-  sheet.appendChild(tCard);
+  content.appendChild(tCard);
 
   // "Из книги" section — sentence with the RU translation wrapped in <b>.
   const fromBook = document.createElement("div");
@@ -1649,7 +1815,7 @@ function openWordSheet(span) {
     sentWrap.textContent = sentenceText;
   }
   fromBook.appendChild(sentWrap);
-  sheet.appendChild(fromBook);
+  content.appendChild(fromBook);
 
   const actions = document.createElement("div");
   actions.className = "sheet-actions";
@@ -1663,15 +1829,13 @@ function openWordSheet(span) {
   ghost.addEventListener("click", () => {
     revertTranslation(lemma);
     closeSheet();
-    toast("Вернули оригинал");
+    showToast("Вернули оригинал");
   });
   actions.appendChild(primary);
   actions.appendChild(ghost);
-  sheet.appendChild(actions);
+  content.appendChild(actions);
 
-  document.body.appendChild(backdrop);
-  document.body.appendChild(sheet);
-  document.addEventListener("keydown", onSheetKeydown);
+  openSheet(content);
 }
 
 // --- helpers (M4.2) ---
