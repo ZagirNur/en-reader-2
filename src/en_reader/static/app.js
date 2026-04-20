@@ -1473,6 +1473,20 @@ function applyTranslationsToSection(page, section) {
   }
 }
 
+// M18.3b: IntersectionObserver only emits on boundary *crossings*, so if
+// the new page we just inserted is short enough that the sentinel stays
+// inside the 400 px rootMargin zone, we never get a second fire and the
+// reader silently stops loading. Check with getBoundingClientRect after
+// every successful insert and recurse if the sentinel is still hot.
+function _sentinelStillHot(selector) {
+  const sentinel = document.querySelector(selector);
+  if (!sentinel) return false;
+  const rect = sentinel.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  if (selector === ".sentinel-bottom") return rect.top < vh + 400;
+  return rect.bottom > -400; // .sentinel-top mirror of the 400 px rootMargin
+}
+
 async function loadBelow() {
   if (_loadingBottom) return;
   if (state.restoring) return;
@@ -1487,6 +1501,7 @@ async function loadBelow() {
     return;
   }
   _loadingBottom = true;
+  let loaded = false;
   try {
     const data = await apiGet(
       `/api/books/${encodeURIComponent(cb.bookId)}/content?offset=${nextIdx}&limit=1`,
@@ -1504,6 +1519,7 @@ async function loadBelow() {
 
     cb.loadedLastIndex = nextIdx;
     cb.pages.push(page);
+    loaded = true;
 
     if (cb.loadedLastIndex === cb.totalPages - 1 && _bottomObs) {
       _bottomObs.disconnect();
@@ -1515,6 +1531,9 @@ async function loadBelow() {
     // stops at whatever's loaded — acceptable for M10.3.
   } finally {
     _loadingBottom = false;
+  }
+  if (loaded && _sentinelStillHot(".sentinel-bottom")) {
+    queueMicrotask(loadBelow);
   }
 }
 
@@ -1532,6 +1551,7 @@ async function loadAbove() {
     return;
   }
   _loadingTop = true;
+  let loaded = false;
   try {
     const data = await apiGet(
       `/api/books/${encodeURIComponent(cb.bookId)}/content?offset=${prevIdx}&limit=1`,
@@ -1563,6 +1583,7 @@ async function loadAbove() {
 
     cb.loadedFirstIndex = prevIdx;
     cb.pages.unshift(page);
+    loaded = true;
 
     if (cb.loadedFirstIndex === 0 && _topObs) {
       _topObs.disconnect();
@@ -1573,6 +1594,9 @@ async function loadAbove() {
     // the next intersection retry.
   } finally {
     _loadingTop = false;
+  }
+  if (loaded && _sentinelStillHot(".sentinel-top")) {
+    queueMicrotask(loadAbove);
   }
 }
 
