@@ -25,7 +25,21 @@ fi
 # 1. Packages.
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  python3.11 python3.11-venv python3-pip git ufw ca-certificates curl
+  python3.11 python3.11-venv python3-pip git ufw ca-certificates curl gnupg
+
+# 1a. Caddy (M13.4) for TLS termination + reverse proxy to :8080. Installed
+#     unconditionally; the bootstrap leaves /etc/caddy/Caddyfile untouched
+#     so operators can paste the real domain at their leisure — Caddy won't
+#     try to fetch a cert until the Caddyfile points at a real hostname.
+if ! command -v caddy >/dev/null 2>&1; then
+  install -d -m 0755 /usr/share/keyrings
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    > /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+fi
 
 # 2. Unprivileged service user.
 if ! id -u "$APP_USER" >/dev/null 2>&1; then
@@ -89,8 +103,11 @@ systemctl enable en-reader-autopull.timer
 systemctl start en-reader-autopull.timer
 
 # 8. Firewall — SSH must go up BEFORE enabling ufw or we lock ourselves out.
+#    :80 + :443 are Caddy's responsibility; uvicorn stays on localhost:8080
+#    which we intentionally do NOT open.
 ufw allow 22/tcp
 ufw allow 80/tcp
+ufw allow 443/tcp
 ufw --force enable
 
 cat <<EOF

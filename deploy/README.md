@@ -134,7 +134,36 @@ sudo TG_BOT_TOKEN=... TG_CHAT_ID=... \
 A curl timeout or missing creds are swallowed — notify never blocks
 autopull longer than 10 s and never fails the deploy on a Telegram outage.
 
+## TLS (M13.4)
+
+Caddy terminates TLS on :80/:443 and reverse-proxies to uvicorn on
+`127.0.0.1:8080`. Caddy fetches and renews Let's Encrypt certs
+automatically — no certbot, no nginx.
+
+First-time setup on the VPS:
+
+1. Point the domain's A-record at the VPS IP.
+2. `sudo cp /opt/en-reader/deploy/Caddyfile.example /etc/caddy/Caddyfile`
+   and replace `DOMAIN.com` with the real hostname.
+3. `sudo systemctl reload caddy` — on the next inbound HTTPS request Caddy
+   grabs the cert. No downtime.
+4. Confirm `ENV=prod` in `/opt/en-reader/.env` so session cookies get the
+   `Secure` flag. `sudo systemctl restart en-reader`.
+5. `curl -I https://<domain>/` — should 200 with HSTS + XCTO headers.
+
+`bootstrap.sh` installs Caddy but deliberately leaves the default
+`/etc/caddy/Caddyfile` in place until a real domain is pasted in — Caddy
+will only attempt to fetch certs once the config names a public hostname.
+
+Diagnose:
+
+```
+systemctl status caddy
+journalctl -u caddy -n 50
+curl -v https://<domain>/    # check TLS handshake + headers
+```
+
 ## Scope
 
-- **M13.4** — Let's Encrypt TLS termination in front of uvicorn (or on :443
-  with the same capability trick).
+All deploy tasks from M13 (bootstrap, autopull, Telegram notify, TLS) are
+covered in this directory. Further hardening lands in M14.x.
