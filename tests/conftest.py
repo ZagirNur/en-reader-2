@@ -113,3 +113,31 @@ def client():
     )
     assert resp.status_code == 200, resp.text
     return c
+
+
+@pytest.fixture()
+def seed_book(client):
+    """Insert a minimal book straight into storage under the fixture user.
+
+    Bypasses the upload route + parser pipeline so tests that only need
+    an owned ``book_id`` (for 404/permission coverage, not for end-to-end
+    content assertions) pay the analyse+chunk cost once per use rather
+    than the full multipart round-trip. Function-scoped so it composes
+    with the autouse ``tmp_db`` fixture.
+    """
+    from en_reader import storage
+    from en_reader.parsers import ParsedBook
+
+    parsed = ParsedBook(
+        title="Fixture Book",
+        author="Tester",
+        language="en",
+        source_format="txt",
+        source_bytes_size=42,
+        text="The cat sat on the mat. She whispered.",
+        images=[],
+        cover=None,
+    )
+    user = storage.user_by_email(FIXTURE_EMAIL)
+    assert user is not None, "client fixture must have created the fixture user"
+    return storage.book_save(parsed, user_id=user.id)
