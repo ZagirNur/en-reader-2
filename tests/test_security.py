@@ -29,8 +29,18 @@ def _assert_security_headers(headers) -> None:
     csp = headers["Content-Security-Policy"]
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
-    # No ``unsafe-inline`` anywhere — CSP must stay strict.
-    assert "unsafe-inline" not in csp
+    # ``unsafe-inline`` is allowed on ``style-src`` only (M17.3): our SPA
+    # sets ``element.style`` attributes from JavaScript, and CSP3 falls
+    # back from ``style-src-attr`` to ``style-src`` for those. It must
+    # NOT appear on ``script-src`` — that would defeat the whole point.
+    assert "script-src 'self'" in csp
+    # Narrow the assertion: unsafe-inline appears only within the
+    # style-src directive.
+    for directive in csp.split(";"):
+        d = directive.strip()
+        if d.startswith("style-src"):
+            continue
+        assert "unsafe-inline" not in d, f"unsafe-inline leaked into {d!r}"
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["X-Frame-Options"] == "DENY"
     assert headers["Referrer-Policy"] == "same-origin"

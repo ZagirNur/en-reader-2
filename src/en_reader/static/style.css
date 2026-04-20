@@ -65,9 +65,14 @@ body.dark { background: #1a1a1e; }
 .phone-body {
   flex: 1; position: relative;
   display: flex; flex-direction: column;
+  min-height: 0;
 }
 .phone-body > #root {
   flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.phone-body > #root > main {
+  flex: 1 0 auto;
 }
 h1, h2, h3 { font-family: 'Geist', sans-serif; letter-spacing: -0.02em; }
 h1 { font-size: 30px; font-weight: 600; margin: 0; }
@@ -302,7 +307,10 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 }
 .add-card:hover { border-color: var(--ink-2); color: var(--ink); }
 
-.library-empty { min-height: 60vh; display: flex; align-items: center; justify-content: center; }
+/* M17.3: empty library no longer collapses to a centered flex — that
+   pulled the header, grid, and add-card into a single horizontal row.
+   Header stays pinned top, the grid (with just the add-card tile)
+   renders in its normal place. */
 
 .card-menu {
   position: absolute; z-index: 50;
@@ -456,16 +464,18 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 }
 #toast.toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-/* tab bar — fixed to viewport bottom, constrained to phone-shell width. */
+/* M17.3: tab bar pins to the bottom of .phone-body so on desktop it
+   hugs the phone-shell bottom (was fixed to viewport bottom, which
+   floated below the phone on short content). On mobile the @media
+   block at the bottom of this file re-pins it to the viewport since
+   the shell is stripped and .phone goes full-height. */
 .tabbar {
-  position: fixed; bottom: 0; left: 50%;
-  transform: translateX(-50%);
-  width: 100%; max-width: 390px;
+  position: sticky; bottom: 0;
+  margin-top: auto;
   display: flex; padding: 8px 10px 30px;
   background: color-mix(in oklab, var(--bg) 88%, transparent);
   backdrop-filter: blur(14px);
   border-top: 1px solid var(--line);
-  flex-shrink: 0;
   z-index: 80;
 }
 .tabbar.hidden { display: none; }
@@ -484,9 +494,10 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 }
 .tab svg { width: 22px; height: 22px; }
 
-/* Give #root breathing room under the fixed tabbar so the last library
-   card / word isn't clipped by the bar's 62-px intrusion. */
-body.with-tabbar #root { padding-bottom: 82px; }
+/* M17.3: desktop tabbar is `position: sticky` inside .phone-body and
+   participates in layout, so no #root padding-bottom is needed. On
+   mobile the @media rule at the bottom switches it back to fixed
+   and re-applies the 82 px padding. */
 
 /* --- M16.4: dictionary screen ---------------------------------------- */
 .dictionary { padding: 0 22px 24px; }
@@ -844,7 +855,14 @@ body.with-tabbar #root { padding-bottom: 82px; }
   }
   .notch, .homebar, .statusbar { display: none; }
   .stage { display: block; }
-  .tabbar { max-width: 100%; }
+  /* M17.3: on mobile the tabbar pins to the viewport bottom instead
+     of the phone-body bottom (shell is stripped). Pad #root so the
+     last row isn't clipped by the bar. */
+  .tabbar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    max-width: 100%;
+  }
+  body.with-tabbar #root { padding-bottom: 82px; }
   #sheet.sheet { max-width: 100%; }
 }
 

@@ -138,22 +138,30 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 # ---------- security middlewares (M14.2) ----------
 
 # Content-Security-Policy: lock every subresource to the same origin, with
-# two narrow whitelists:
+# a few narrow whitelists:
 #   * ``img-src data:`` — we serve inline book illustrations as real
 #     ``/api/.../images/...`` URLs today, but keep ``data:`` on the
 #     allowlist defensively so a future embed (e.g. a 1x1 pixel) doesn't
-#     break. No ``unsafe-inline`` anywhere.
+#     break.
+#   * ``style-src 'unsafe-inline'`` — the SPA sets a lot of ``element.style``
+#     properties from JavaScript (layout tweaks, dynamic colours, pbar
+#     widths). Under CSP3 these counts as "style attributes" and fall back
+#     to ``style-src`` when ``style-src-attr`` is absent, so without
+#     ``'unsafe-inline'`` every ``el.style.foo = 'bar'`` is silently
+#     blocked and the UI renders unstyled. We do NOT load any third-party
+#     stylesheets beyond Google Fonts, so the attack surface remains
+#     restricted to same-origin script injection — which is already
+#     blocked by the matching ``script-src 'self'``.
 #   * Google Fonts — ``index.html`` loads the Geist family from
 #     ``fonts.googleapis.com`` (stylesheet) + ``fonts.gstatic.com`` (the
-#     actual font files) since M3.3. If that CDN is ever dropped, trim
-#     both entries back to ``'self'``.
+#     actual font files) since M3.3.
 # ``frame-ancestors 'none'`` is the modern replacement for XFO=DENY —
 # we still send both because some corporate proxies strip one or the other.
 _CSP = (
     "default-src 'self'; "
     "img-src 'self' data:; "
     "connect-src 'self'; "
-    "style-src 'self' https://fonts.googleapis.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "script-src 'self'; "
     "font-src 'self' https://fonts.gstatic.com; "
     "frame-ancestors 'none'"

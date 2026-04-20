@@ -191,7 +191,10 @@ function parseRoute(path) {
   // M11.3: both /login and /signup render the same auth screen; the
   // signup/login toggle is driven by state.authMode so both paths map to
   // a single view and the UI switch button is the canonical mode driver.
-  if (path === "/login" || path === "/signup") return { view: "login" };
+  // M17.3: direct-land on /signup should flip authMode automatically so
+  // a user who clicked "Sign up" in an email doesn't see the login form.
+  if (path === "/signup") return { view: "login", authMode: "signup" };
+  if (path === "/login") return { view: "login", authMode: "login" };
   // M16.4: dictionary screen. Tab bar's "dict" tab routes here.
   if (path === "/dict") return { view: "dictionary" };
   // M16.5: catalog screen. Tab bar's "cat" tab routes here.
@@ -212,6 +215,9 @@ function navigate(path) {
   const parsed = parseRoute(path);
   const patch = { route: path, view: parsed.view };
   if (parsed.view === "error") patch.error = `Unknown route: ${path}`;
+  // M17.3: /signup and /login carry authMode hints so a direct land picks
+  // the right form without the user toggling.
+  if (parsed.authMode) patch.authMode = parsed.authMode;
   // A navigation to a different book should drop any previously-loaded content.
   if (parsed.view === "reader") {
     const prev = state.currentBook;
@@ -261,6 +267,7 @@ function onPopState() {
   const parsed = parseRoute(path);
   const patch = { route: path, view: parsed.view };
   if (parsed.view === "error") patch.error = `Unknown route: ${path}`;
+  if (parsed.authMode) patch.authMode = parsed.authMode;
   if (parsed.view === "reader") {
     const prev = state.currentBook;
     if (!prev || prev.bookId !== parsed.bookId) patch.currentBook = null;
@@ -3430,7 +3437,11 @@ async function bootstrap() {
       navigate("/login");
       return;
     }
-    setState({ route: path, view: "login" });
+    // M17.3: direct-land on /signup opens the signup form, /login stays login.
+    const parsed = parseRoute(path);
+    const patch = { route: path, view: "login" };
+    if (parsed.authMode) patch.authMode = parsed.authMode;
+    setState(patch);
     return;
   }
   if (authStatus !== 200) {
