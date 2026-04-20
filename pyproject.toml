@@ -25,6 +25,7 @@ dependencies = [
     "ebooklib>=0.18",
     "beautifulsoup4>=4.12",
     "pytest",
+    "pytest-cov>=4.1",
     "ruff",
     "black",
 ]
@@ -37,3 +38,13 @@ line-length = 100
 
 [tool.black]
 line-length = 100
+
+[tool.coverage.run]
+source = ["src/en_reader"]
+omit = ["src/en_reader/static/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
