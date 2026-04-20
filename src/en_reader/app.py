@@ -25,9 +25,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from en_reader import storage
@@ -119,7 +120,90 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     yield
 
 
+# ---------- security middlewares (M14.2) ----------
+
+# Content-Security-Policy: lock every subresource to the same origin, with
+# two narrow whitelists:
+#   * ``img-src data:`` — we serve inline book illustrations as real
+#     ``/api/.../images/...`` URLs today, but keep ``data:`` on the
+#     allowlist defensively so a future embed (e.g. a 1x1 pixel) doesn't
+#     break. No ``unsafe-inline`` anywhere.
+#   * Google Fonts — ``index.html`` loads the Geist family from
+#     ``fonts.googleapis.com`` (stylesheet) + ``fonts.gstatic.com`` (the
+#     actual font files) since M3.3. If that CDN is ever dropped, trim
+#     both entries back to ``'self'``.
+# ``frame-ancestors 'none'`` is the modern replacement for XFO=DENY —
+# we still send both because some corporate proxies strip one or the other.
+_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "style-src 'self' https://fonts.googleapis.com; "
+    "script-src 'self'; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "frame-ancestors 'none'"
+)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Attach baseline security headers to every outgoing response.
+
+    Set unconditionally — static assets, API JSON, SPA shell, error
+    responses, everything. Caddy also emits HSTS in front of us (M13.4),
+    which is why we don't set it here.
+    """
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        resp = await call_next(request)
+        resp.headers["Content-Security-Policy"] = _CSP
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "same-origin"
+        resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return resp
+
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+class OriginCheckMiddleware(BaseHTTPMiddleware):
+    """Cheap CSRF guard on top of ``SameSite=Lax`` session cookies.
+
+    For any non-safe method (POST/PUT/PATCH/DELETE) we look at
+    ``Origin`` first, then ``Referer``. If either is present and does
+    **not** start with the request's own ``base_url``, we reject 403 with
+    a JSON body. If neither header is present we allow the request
+    through — a handful of legitimate clients (``navigator.sendBeacon``
+    in some browsers, server-to-server curl) omit both, and blocking
+    them would be more user-visible breakage than the attack surface it
+    closes. The session cookie's ``SameSite=Lax`` flag still protects
+    against the classic cross-site form-post case.
+    """
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        if request.method not in _SAFE_METHODS:
+            origin = request.headers.get("origin") or request.headers.get("referer", "")
+            if origin:
+                expected = str(request.base_url).rstrip("/")
+                if not origin.startswith(expected):
+                    return JSONResponse(
+                        {"detail": "forbidden origin"},
+                        status_code=403,
+                    )
+        return await call_next(request)
+
+
 app = FastAPI(title="en-reader", lifespan=lifespan)
+# Middleware registration in Starlette wraps **around** previously-added
+# middleware, so the last ``add_middleware`` call runs first on the way
+# in. We want, inbound:
+#     OriginCheck  →  SessionMiddleware  →  SecurityHeaders  →  route
+# so we register in the reverse order: SecurityHeaders first (innermost,
+# runs last inbound / first outbound → always stamps headers), then
+# SessionMiddleware (so the Origin check sees session cookies if it ever
+# needs them), then OriginCheck outermost (reject CSRF before we touch
+# the session or any route handler).
+app.add_middleware(SecurityHeadersMiddleware)
 # SessionMiddleware goes on before any routes run — Starlette walks the
 # middleware stack on every request, so position doesn't affect route
 # resolution, only the visible order of request/response callbacks.
@@ -135,6 +219,7 @@ app.add_middleware(
     same_site="lax",
     https_only=os.getenv("ENV") == "prod",
 )
+app.add_middleware(OriginCheckMiddleware)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
