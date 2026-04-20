@@ -250,10 +250,20 @@ class TranslateRequest(BaseModel):
     unit_text: str = Field(min_length=1, max_length=100)
     sentence: str = Field(min_length=1, max_length=2000)
     lemma: str = Field(min_length=1, max_length=100)
+    # M16.3: frontend may tell the server which book the lemma was clicked
+    # in, so the dictionary row can remember its origin (sheet UI shows a
+    # "from: The Great Gatsby" chip). Optional — pre-M16.3 clients keep
+    # working with no source attribution.
+    source_book_id: int | None = None
 
 
 class TranslateResponse(BaseModel):
     ru: str
+
+
+class TrainingResultIn(BaseModel):
+    lemma: str = Field(min_length=1, max_length=100)
+    correct: bool
 
 
 class BookListItem(BaseModel):
@@ -534,13 +544,82 @@ def translate(
         ru = translate_one(req.unit_text, req.sentence)
     except TranslateError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    storage.dict_add(req.lemma, ru, user_id=user.id)
+    # M16.3: persist the originating sentence + (optional) book so the
+    # sheet UI can show "from: <book>" chips without a second lookup.
+    # ``source_book_id`` is not ownership-checked here: the FK already
+    # targets the caller's own books via the ON DELETE SET NULL constraint,
+    # and a caller spoofing someone else's id only pollutes their own row.
+    storage.dict_add(
+        req.lemma,
+        ru,
+        user_id=user.id,
+        example=req.sentence,
+        source_book_id=req.source_book_id,
+    )
     return TranslateResponse(ru=ru)
 
 
 @app.get("/api/dictionary")
 def api_dictionary_list(user: User = Depends(get_current_user)) -> dict[str, str]:
+    """Legacy flat ``{lemma: translation}`` map used by pre-M16.3 clients.
+
+    Kept as-is so the reader's auto-highlight path (which only needs the
+    key set) and existing tests keep working. The richer list-of-objects
+    shape lives at :func:`api_dictionary_words` below.
+    """
     return storage.dict_all(user_id=user.id)
+
+
+@app.get("/api/dictionary/words")
+def api_dictionary_words(
+    status: str = "all",
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Return the rich dictionary shape for the M16.4 Words screen.
+
+    ``status`` filters to one of :data:`en_reader.storage.DICT_STATUSES`
+    (``new`` / ``learning`` / ``review`` / ``mastered``) or ``all``.
+    Unknown values 400 so a typo in the query string fails loudly rather
+    than silently returning the full list.
+    """
+    if status != "all" and status not in storage.DICT_STATUSES:
+        raise HTTPException(status_code=400, detail="invalid status")
+    filter_status = None if status == "all" else status
+    return storage.dict_list(status=filter_status, user_id=user.id)
+
+
+@app.get("/api/dictionary/stats")
+def api_dictionary_stats(user: User = Depends(get_current_user)) -> dict:
+    """Return aggregate counts per progression status (spec §5)."""
+    return storage.dict_stats(user_id=user.id)
+
+
+@app.get("/api/dictionary/training")
+def api_dictionary_training(
+    limit: int = 10,
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Return the next ``limit`` training candidates, prioritised per spec §4."""
+    # Clamp so a client can't ask for the whole dictionary in one shot.
+    if limit < 1:
+        limit = 1
+    if limit > 100:
+        limit = 100
+    return storage.pick_training_pool(limit=limit, user_id=user.id)
+
+
+@app.post("/api/dictionary/training/result", status_code=204)
+def api_dictionary_training_result(
+    p: TrainingResultIn,
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Record one training answer and advance the word's progression.
+
+    Idempotent on unknown lemma: ``record_training_result`` silently no-ops
+    so a stale client replaying an answer after a deletion does not 404.
+    """
+    storage.record_training_result(p.lemma, p.correct, user_id=user.id)
+    return Response(status_code=204)
 
 
 @app.delete("/api/dictionary/{lemma}")

@@ -1,6 +1,6 @@
 """Deterministically regenerate the migration fixture databases (M14.5).
 
-Produces ``tests/fixtures/migrations/schema_v<N>.db`` for N in 1..4 — a
+Produces ``tests/fixtures/migrations/schema_v<N>.db`` for N in 1..5 — a
 SQLite snapshot whose schema_version is exactly N, seeded with a handful
 of rows for each table that exists at that level. These files are
 checked into the repo and exercised by ``tests/test_migrations.py`` to
@@ -160,11 +160,84 @@ def _seed_v4(conn: sqlite3.Connection) -> None:
         )
 
 
+def _seed_v5(conn: sqlite3.Connection) -> None:
+    """Seed the v5 per-user schema directly (no v4 replay needed).
+
+    The v4→v5 migration already created the ``users`` table and seeded
+    ``seed@local``; we reuse its id as the owner of every row. Writes go
+    through the v5 shape (``user_id`` columns present), matching the
+    post-migration layout that production DBs have at this schema
+    version. Row counts mirror the other fixtures (5 dict entries, 2
+    books, 15 pages, 1 reading_progress row, 2 book_images) so
+    ``test_migrations`` can assert identical ``before`` totals across
+    every fixture.
+    """
+    seed_user_id = conn.execute("SELECT id FROM users WHERE email='seed@local'").fetchone()[0]
+    with conn:
+        # 5 dictionary rows (matches the v1 count the test asserts on).
+        for lemma, tr in [
+            ("ominous", "зловещий"),
+            ("whisper", "шёпот"),
+            ("gloom", "мрак"),
+            ("valley", "долина"),
+            ("shiver", "дрожь"),
+        ]:
+            conn.execute(
+                "INSERT INTO user_dictionary(user_id, lemma, translation, first_seen_at) "
+                "VALUES(?, ?, ?, ?)",
+                (seed_user_id, lemma, tr, FIXED_TS),
+            )
+        # 2 book_images blobs (matches v2 count).
+        for image_id, payload in [
+            ("img0000000001", b"\x89PNG-fixture-1"),
+            ("img0000000002", b"\x89PNG-fixture-2"),
+        ]:
+            conn.execute(
+                "INSERT INTO book_images(book_id, image_id, mime_type, data) "
+                "VALUES(?, ?, ?, ?)",
+                (1, image_id, "image/png", payload),
+            )
+        # 2 books × 8+7 = 15 pages (matches v3 counts).
+        conn.execute(
+            "INSERT INTO books(id, user_id, title, author, language, source_format, "
+            "source_bytes_size, total_pages, cover_path, created_at) "
+            "VALUES(?, ?, ?, ?, 'en', 'txt', 0, ?, NULL, ?)",
+            (1, seed_user_id, "Book A", "Author A", 8, FIXED_TS),
+        )
+        conn.execute(
+            "INSERT INTO books(id, user_id, title, author, language, source_format, "
+            "source_bytes_size, total_pages, cover_path, created_at) "
+            "VALUES(?, ?, ?, ?, 'en', 'txt', 0, ?, NULL, ?)",
+            (2, seed_user_id, "Book B", "Author B", 7, FIXED_TS),
+        )
+        for book_id, page_count in ((1, 8), (2, 7)):
+            for idx in range(page_count):
+                conn.execute(
+                    "INSERT INTO pages(book_id, page_index, text, tokens_gz, "
+                    "units_gz, images_gz) VALUES(?, ?, ?, ?, ?, ?)",
+                    (
+                        book_id,
+                        idx,
+                        f"Page {idx} of book {book_id}.",
+                        EMPTY_LIST_GZ,
+                        EMPTY_LIST_GZ,
+                        EMPTY_LIST_GZ,
+                    ),
+                )
+        # 1 reading_progress row (matches v4 count).
+        conn.execute(
+            "INSERT INTO reading_progress(user_id, book_id, last_page_index, "
+            "last_page_offset, updated_at) VALUES(?, ?, ?, ?, ?)",
+            (seed_user_id, 2, 0, 0.42, FIXED_TS),
+        )
+
+
 SEEDERS = {
     1: _seed_v1,
     2: _seed_v2,
     3: _seed_v3,
     4: _seed_v4,
+    5: _seed_v5,
 }
 
 
@@ -204,8 +277,8 @@ def _build_fixture(n: int) -> Path:
 
 
 def main() -> None:
-    """Regenerate every ``schema_v{1..4}.db`` under the fixtures dir."""
-    for n in (1, 2, 3, 4):
+    """Regenerate every ``schema_v{1..5}.db`` under the fixtures dir."""
+    for n in (1, 2, 3, 4, 5):
         path = _build_fixture(n)
         size = path.stat().st_size
         print(f"wrote {path.relative_to(_REPO_ROOT)}  ({size} bytes)")

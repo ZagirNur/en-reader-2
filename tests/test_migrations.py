@@ -103,11 +103,11 @@ def _columns(db_path: Path, table: str) -> set[str]:
         conn.close()
 
 
-@pytest.mark.parametrize("from_version", [1, 2, 3, 4])
+@pytest.mark.parametrize("from_version", [1, 2, 3, 4, 5])
 def test_migration_preserves_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_version: int
 ) -> None:
-    """Every pre-v5 fixture survives ``migrate()`` without losing rows."""
+    """Every pre-v6 fixture survives ``migrate()`` without losing rows."""
     src = FIXTURES_DIR / f"schema_v{from_version}.db"
     assert src.exists(), f"Missing fixture: {src} — run scripts/generate_migration_fixtures.py"
     dst = tmp_path / "test.db"
@@ -133,7 +133,8 @@ def test_migration_preserves_data(
 
     # Additive property: every table present in ``before`` keeps at
     # least as many rows after migration. v4→v5 rebuilds three tables
-    # under new names but copies every row across.
+    # under new names but copies every row across; v5→v6 only adds
+    # nullable columns so counts are untouched.
     for tbl, before_count in before.items():
         after_count = after.get(tbl, 0)
         assert after_count >= before_count, (
@@ -141,7 +142,7 @@ def test_migration_preserves_data(
             f"before={before_count}, after={after_count}"
         )
 
-    assert _schema_version(dst) == "5"
+    assert _schema_version(dst) == "6"
 
     # v4→v5 specifics: the seed user exists (exactly once) and the
     # books table grew a ``user_id`` column.
@@ -156,9 +157,30 @@ def test_migration_preserves_data(
     assert users[0][0] == "seed@local"
     assert "user_id" in _columns(dst, "books")
 
+    # v5→v6 specifics: every progression column landed on
+    # ``user_dictionary`` and pre-existing rows adopted the defaults.
+    ud_cols = _columns(dst, "user_dictionary")
+    for col in (
+        "status",
+        "correct_streak",
+        "wrong_count",
+        "last_reviewed_at",
+        "next_review_at",
+        "example",
+        "source_book_id",
+    ):
+        assert col in ud_cols, f"Missing user_dictionary column after v6 migrate: {col}"
+    conn = sqlite3.connect(str(dst))
+    try:
+        statuses = conn.execute("SELECT DISTINCT status FROM user_dictionary").fetchall()
+    finally:
+        conn.close()
+    # Rows migrated in from v<6 adopt the ``status='new'`` default.
+    assert {r[0] for r in statuses} == {"new"}
+
 
 def test_migrate_from_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A virgin SQLite file migrates cleanly to schema_version=5."""
+    """A virgin SQLite file migrates cleanly to the current schema version."""
     dst = tmp_path / "fresh.db"
     # Don't even create the file — storage.get_db() does that lazily.
     monkeypatch.setenv("DB_PATH", str(dst))
@@ -167,7 +189,7 @@ def test_migrate_from_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     storage._reset_for_tests()
 
     assert dst.exists()
-    assert _schema_version(dst) == "5"
+    assert _schema_version(dst) == "6"
 
     # Every table introduced across the migration chain is present.
     conn = sqlite3.connect(str(dst))

@@ -33,7 +33,7 @@ import logging
 import os
 import sqlite3
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -291,12 +291,39 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX idx_rp_user_book ON reading_progress(user_id, book_id)")
 
 
+def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """M16.3: extend ``user_dictionary`` with progression + sheet-display columns.
+
+    SQLite supports ``ALTER TABLE ADD COLUMN`` directly when the new column
+    has a ``DEFAULT`` or is nullable — no table rebuild needed. Existing
+    rows adopt the defaults (``status='new'``, counters=0, nullable fields
+    NULL), which is exactly what we want for words added pre-M16.3.
+    ``source_book_id`` is a proper FK with ``ON DELETE SET NULL`` so
+    deleting a book does not orphan dictionary entries that referenced it.
+    ``ipa`` / ``pos`` are intentionally absent from the schema: per spec §8
+    they stay ``None`` in the API response and we do not persist them.
+    """
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN status TEXT NOT NULL DEFAULT 'new'")
+    conn.execute(
+        "ALTER TABLE user_dictionary ADD COLUMN correct_streak INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN wrong_count INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN last_reviewed_at TEXT")
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN next_review_at TEXT")
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN example TEXT")
+    conn.execute(
+        "ALTER TABLE user_dictionary ADD COLUMN source_book_id INTEGER "
+        "REFERENCES books(id) ON DELETE SET NULL"
+    )
+
+
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
     _migrate_v2_to_v3,
     _migrate_v3_to_v4,
     _migrate_v4_to_v5,
+    _migrate_v5_to_v6,
 ]
 
 
@@ -328,23 +355,44 @@ def migrate() -> None:
 # ---------- user dictionary DAO ----------
 
 
-def dict_add(lemma: str, translation: str, *, user_id: int = SEED_USER_ID) -> None:
+def dict_add(
+    lemma: str,
+    translation: str,
+    *,
+    user_id: int = SEED_USER_ID,
+    example: str | None = None,
+    source_book_id: int | None = None,
+) -> None:
     """Insert ``(lemma, translation)`` if the lemma is not already present.
 
     First write wins — updates require an explicit ``dict_remove`` + add.
     ``user_id`` defaults to :data:`SEED_USER_ID` so pre-M11 call sites keep
     working without changes.
+
+    M16.3: new rows land in the ``status='new'`` lane with ``next_review_at``
+    one day ahead of ``first_seen_at``. ``example`` captures the sentence the
+    lemma was first met in (used by the sheet UI); ``source_book_id`` records
+    which book the word came from, if known.
     """
     conn = get_db()
+    now = datetime.now(timezone.utc)
+    first_seen = now.isoformat()
+    next_review = (now + timedelta(days=1)).isoformat()
     with conn:
         conn.execute(
-            "INSERT OR IGNORE INTO user_dictionary(user_id, lemma, translation, first_seen_at) "
-            "VALUES(?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO user_dictionary("
+            "user_id, lemma, translation, first_seen_at, "
+            "status, correct_streak, wrong_count, "
+            "last_reviewed_at, next_review_at, example, source_book_id"
+            ") VALUES(?, ?, ?, ?, 'new', 0, 0, NULL, ?, ?, ?)",
             (
                 user_id,
                 lemma.lower(),
                 translation,
-                datetime.now(timezone.utc).isoformat(),
+                first_seen,
+                next_review,
+                example,
+                source_book_id,
             ),
         )
 
@@ -378,6 +426,300 @@ def dict_all(*, user_id: int = SEED_USER_ID) -> dict[str, str]:
         (user_id,),
     )
     return {row["lemma"]: row["translation"] for row in cur.fetchall()}
+
+
+# ---------- word progression (M16.3) ----------
+
+# Valid values for ``user_dictionary.status`` — the enum that drives every
+# transition rule below. ``mastered`` is the terminal green state; ``new``
+# is the entry point from ``dict_add``; ``learning`` / ``review`` are the
+# intermediate lanes. Anki-flavoured but deliberately simpler: no per-card
+# ease factor, no interval math beyond the fixed 1/3/14/30 day offsets.
+DICT_STATUSES = ("new", "learning", "review", "mastered")
+
+
+def record_training_result(
+    lemma: str,
+    correct: bool,
+    *,
+    user_id: int = SEED_USER_ID,
+) -> None:
+    """Update a word's progression after one training answer.
+
+    Transition rules (spec §3):
+
+    * ``new`` + correct                  → ``learning``, streak=1,
+      next_review_at = NOW()+1d
+    * ``learning`` + correct (streak≥1)  → ``review``, streak=2,
+      next_review_at = NOW()+3d
+    * ``learning`` + correct (streak=0)  → stays ``learning``, streak=1
+    * ``review``   + correct (streak≥2)  → ``mastered``, next_review_at=NOW()+14d
+    * ``review``   + correct (streak<2)  → stays ``review``, streak+=1
+    * ``mastered`` + correct             → stays ``mastered`` (streak+=1)
+    * any state    + wrong               → ``learning``, streak=0,
+      wrong_count+=1, next_review_at = NOW()+1d
+      (except ``new`` + wrong stays ``new`` — never trained means no demotion)
+
+    Unknown lemma is a silent no-op: callers (tests, API) get idempotent
+    behaviour and a client replaying a stale training result after a
+    ``DELETE /api/dictionary/{lemma}`` does not 404 the session.
+
+    Timestamps are UTC ISO-8601 (``isoformat()``) so they sort lexically —
+    which is all the ``pick_training_pool`` / ``dict_stats`` queries need.
+    """
+    conn = get_db()
+    row = conn.execute(
+        "SELECT status, correct_streak, wrong_count "
+        "FROM user_dictionary WHERE user_id = ? AND lemma = ?",
+        (user_id, lemma.lower()),
+    ).fetchone()
+    if row is None:
+        # Unknown lemma — no-op rather than raise, so clients can replay a
+        # training result after the word was deleted without blowing up.
+        return
+
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    status = row["status"]
+    streak = int(row["correct_streak"])
+    wrong = int(row["wrong_count"])
+
+    if correct:
+        if status == "new":
+            new_status = "learning"
+            new_streak = 1
+            next_review = (now + timedelta(days=1)).isoformat()
+        elif status == "learning":
+            # Promote to review on the *second* consecutive correct answer.
+            if streak >= 1:
+                new_status = "review"
+                new_streak = streak + 1
+                next_review = (now + timedelta(days=3)).isoformat()
+            else:
+                new_status = "learning"
+                new_streak = 1
+                next_review = (now + timedelta(days=1)).isoformat()
+        elif status == "review":
+            # Promote to mastered on the *second* consecutive correct while
+            # already in review — streak was at least 2 entering review,
+            # so one more correct answer takes it to ≥3 and crosses the
+            # mastered threshold. Fresh demotions reset streak to 0, so
+            # we compare to 2 rather than being looser.
+            if streak >= 2:
+                new_status = "mastered"
+                new_streak = streak + 1
+                next_review = (now + timedelta(days=14)).isoformat()
+            else:
+                new_status = "review"
+                new_streak = streak + 1
+                next_review = (now + timedelta(days=3)).isoformat()
+        else:  # mastered
+            new_status = "mastered"
+            new_streak = streak + 1
+            # Stay on the long interval while mastered-correct.
+            next_review = (now + timedelta(days=14)).isoformat()
+        new_wrong = wrong
+    else:
+        new_wrong = wrong + 1
+        if status == "new":
+            # A word that was never trained can't be demoted — keep it in
+            # ``new`` but bump wrong_count and push next_review out by a day
+            # so the user doesn't see it again immediately.
+            new_status = "new"
+            new_streak = 0
+            next_review = (now + timedelta(days=1)).isoformat()
+        else:
+            # review / learning / mastered + wrong → back to learning.
+            new_status = "learning"
+            new_streak = 0
+            next_review = (now + timedelta(days=1)).isoformat()
+
+    with conn:
+        conn.execute(
+            "UPDATE user_dictionary SET status = ?, correct_streak = ?, "
+            "wrong_count = ?, last_reviewed_at = ?, next_review_at = ? "
+            "WHERE user_id = ? AND lemma = ?",
+            (
+                new_status,
+                new_streak,
+                new_wrong,
+                now_iso,
+                next_review,
+                user_id,
+                lemma.lower(),
+            ),
+        )
+
+
+def pick_training_pool(
+    limit: int = 10,
+    *,
+    user_id: int = SEED_USER_ID,
+) -> list[dict]:
+    """Return up to ``limit`` words prioritised for the next training session.
+
+    Priority (spec §4):
+
+    1. ``status='review'`` AND ``next_review_at <= NOW()`` — overdue reviews.
+    2. ``status='learning'``  — still being cemented.
+    3. ``status='new'``       — not yet trained.
+
+    Within each tier, older ``next_review_at`` wins (NULL last) so the most
+    overdue items surface first.  Each entry carries ``lemma``,
+    ``translation``, ``status``, ``example`` — enough for the sheet UI to
+    render a card without a second round-trip.
+    """
+    if limit <= 0:
+        return []
+    conn = get_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Ranking via a CASE expression keeps us in a single query: lower
+    # ``priority`` sorts first. ``next_review_at`` tiebreaks within a
+    # tier; NULLs are pushed to the end so freshly-added words don't
+    # leapfrog overdue ones.
+    cur = conn.execute(
+        """
+        SELECT lemma, translation, status, example
+        FROM user_dictionary
+        WHERE user_id = ? AND (
+            (status = 'review' AND next_review_at IS NOT NULL AND next_review_at <= ?)
+            OR status = 'learning'
+            OR status = 'new'
+        )
+        ORDER BY
+            CASE
+                WHEN status = 'review' THEN 1
+                WHEN status = 'learning' THEN 2
+                WHEN status = 'new' THEN 3
+                ELSE 4
+            END,
+            CASE WHEN next_review_at IS NULL THEN 1 ELSE 0 END,
+            next_review_at ASC,
+            lemma ASC
+        LIMIT ?
+        """,
+        (user_id, now_iso, limit),
+    )
+    return [
+        {
+            "lemma": row["lemma"],
+            "translation": row["translation"],
+            "status": row["status"],
+            "example": row["example"],
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def dict_stats(*, user_id: int = SEED_USER_ID) -> dict:
+    """Return dictionary-wide progression counts (spec §5).
+
+    ``review_today`` counts words in the ``review`` lane that become due by
+    tomorrow-midnight-ish (we use ``NOW()+1day`` which is close enough for
+    a home-screen badge). ``active`` is the sum of ``new`` + ``learning``.
+    Each individual status is also returned so the UI can render a four-way
+    bar without a second request.
+    """
+    conn = get_db()
+    now = datetime.now(timezone.utc)
+    tomorrow_iso = (now + timedelta(days=1)).isoformat()
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS c_new,
+            SUM(CASE WHEN status = 'learning' THEN 1 ELSE 0 END) AS c_learning,
+            SUM(CASE WHEN status = 'review' THEN 1 ELSE 0 END) AS c_review,
+            SUM(CASE WHEN status = 'mastered' THEN 1 ELSE 0 END) AS c_mastered,
+            SUM(CASE WHEN status = 'review' AND next_review_at IS NOT NULL
+                     AND next_review_at <= ? THEN 1 ELSE 0 END) AS c_review_today
+        FROM user_dictionary
+        WHERE user_id = ?
+        """,
+        (tomorrow_iso, user_id),
+    ).fetchone()
+    # SUM over zero rows returns None — coerce to 0 so callers always see ints.
+    c_new = int(row["c_new"] or 0)
+    c_learning = int(row["c_learning"] or 0)
+    c_review = int(row["c_review"] or 0)
+    c_mastered = int(row["c_mastered"] or 0)
+    c_review_today = int(row["c_review_today"] or 0)
+    return {
+        "total": int(row["total"] or 0),
+        "review_today": c_review_today,
+        "active": c_new + c_learning,
+        "mastered": c_mastered,
+        "new": c_new,
+        "learning": c_learning,
+        "review": c_review,
+    }
+
+
+def dict_list(
+    status: str | None = None,
+    *,
+    user_id: int = SEED_USER_ID,
+) -> list[dict]:
+    """Return the full dictionary as the rich sheet-ready list shape.
+
+    ``status`` filters to one of :data:`DICT_STATUSES`; ``None`` or
+    ``"all"`` returns every row. Each entry carries ``source_book``
+    expanded to ``{id, title}`` via a LEFT JOIN on ``books`` so the
+    frontend can render a chip without an extra lookup (and ``None`` when
+    the word was added without a known source book).
+
+    ``days_since_review`` is computed server-side (whole days, ``>=0``)
+    from ``last_reviewed_at`` so the UI does not need to re-parse the
+    timestamp. ``ipa`` and ``pos`` are placeholders per spec §8 — always
+    ``None`` in M16.3; future tasks will back them with a static JSON
+    lookup table.
+    """
+    conn = get_db()
+    params: list[Any] = [user_id]
+    where = "WHERE ud.user_id = ?"
+    if status and status != "all":
+        where += " AND ud.status = ?"
+        params.append(status)
+    cur = conn.execute(
+        f"""
+        SELECT ud.lemma, ud.translation, ud.status, ud.example,
+               ud.first_seen_at, ud.last_reviewed_at, ud.source_book_id,
+               b.title AS book_title
+        FROM user_dictionary ud
+        LEFT JOIN books b ON b.id = ud.source_book_id
+        {where}
+        ORDER BY ud.first_seen_at DESC, ud.lemma ASC
+        """,
+        tuple(params),
+    )
+    now = datetime.now(timezone.utc)
+    out: list[dict] = []
+    for row in cur.fetchall():
+        source_book: dict | None = None
+        if row["source_book_id"] is not None and row["book_title"] is not None:
+            source_book = {"id": int(row["source_book_id"]), "title": row["book_title"]}
+        days_since_review: int | None = None
+        if row["last_reviewed_at"]:
+            try:
+                reviewed = datetime.fromisoformat(row["last_reviewed_at"])
+                days_since_review = max(0, (now - reviewed).days)
+            except ValueError:
+                days_since_review = None
+        out.append(
+            {
+                "lemma": row["lemma"],
+                "translation": row["translation"],
+                "status": row["status"],
+                "example": row["example"],
+                "source_book": source_book,
+                "first_seen_at": row["first_seen_at"],
+                "last_reviewed_at": row["last_reviewed_at"],
+                "days_since_review": days_since_review,
+                "ipa": None,
+                "pos": None,
+            }
+        )
+    return out
 
 
 # ---------- book_images DAO ----------

@@ -176,5 +176,10 @@ def test_v4_to_v5_is_idempotent_via_full_migrate() -> None:
         .execute("SELECT value FROM meta WHERE key='schema_version'")
         .fetchone()["value"]
     )
-    assert version_before == version_after == "5"
+    # Full-stack migrate() advances to the *current* head, so after
+    # v5→v6 landed this pair both stabilise at "6" and re-running is a
+    # no-op. We care that the version is stable and >= "5" (the original
+    # contract), not the exact numeric value.
+    assert version_before == version_after
+    assert int(version_before) >= 5
     storage._reset_for_tests()
