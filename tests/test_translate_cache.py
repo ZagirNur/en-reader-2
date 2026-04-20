@@ -114,10 +114,12 @@ def test_miss_calls_llm_and_persists(client: TestClient) -> None:
 def test_logs_hit_and_miss(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        with caplog.at_level(logging.INFO, logger="en_reader.app"):
+        # M14.1 renamed the module logger to a flat "en_reader" — keep the
+        # capture scope matching the app-side logger name.
+        with caplog.at_level(logging.INFO, logger="en_reader"):
             client.post("/api/translate", json=_payload())
             client.post("/api/translate", json=_payload())
 
-    messages = [r.getMessage() for r in caplog.records if r.name == "en_reader.app"]
+    messages = [r.getMessage() for r in caplog.records if r.name == "en_reader"]
     assert any("MISS" in m and "ominous" in m for m in messages)
     assert any("HIT" in m and "ominous" in m for m in messages)

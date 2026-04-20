@@ -17,8 +17,10 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import subprocess
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -35,6 +37,7 @@ from en_reader.auth import (
     hash_password,
     normalize_email,
 )
+from en_reader.logs import get_ring, install as install_logging
 from en_reader.metrics import counters
 from en_reader.models import BookMeta, User
 from en_reader.parsers import UnsupportedFormatError, parse_book
@@ -42,7 +45,47 @@ from en_reader.translate import TranslateError, translate_one
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+# Wire structured logging + RingBufferHandler onto the root logger before
+# the FastAPI app is built, so even import-time module logs land in the
+# ring buffer surfaced by /debug/logs.
+install_logging()
+
+logger = logging.getLogger("en_reader")
+
+
+# ---------- process-wide metadata (M14.1) ----------
+
+_startup_ts = datetime.now(timezone.utc)
+_git_sha: str | None = None
+
+
+def _get_git_sha() -> str:
+    """Return the short git SHA of the running checkout, cached after first call.
+
+    Falls back to ``"unknown"`` when ``.git`` is absent (e.g. container or
+    source tarball install) or ``git`` itself isn't on PATH. The subprocess
+    runs from this file's directory so a caller's cwd doesn't throw the
+    lookup off.
+    """
+    global _git_sha
+    if _git_sha is None:
+        try:
+            out = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(Path(__file__).resolve().parent),
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            _git_sha = out.strip() or "unknown"
+        except Exception:
+            _git_sha = "unknown"
+    return _git_sha
+
+
+# Log startup once at import time — the lifespan hook also runs, but
+# logging here means the line shows up even if an import-time config
+# error blows up before the server ever accepts a connection.
+logger.info("en-reader starting, sha=%s", _get_git_sha())
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -471,6 +514,7 @@ def auth_signup(cred: Credentials, request: Request) -> dict:
         raise HTTPException(status_code=409, detail="email exists")
     user_id = storage.user_create(email, hash_password(cred.password))
     request.session["user_id"] = user_id
+    logger.info("user signed up: email=%s", email)
     return {"email": email}
 
 
@@ -495,6 +539,7 @@ def auth_login(cred: Credentials, request: Request) -> dict:
     if user is None or not check_password(cred.password, user.password_hash):
         raise HTTPException(status_code=401, detail="invalid credentials")
     request.session["user_id"] = user.id
+    logger.info("user logged in: email=%s", user.email)
     return {"email": user.email}
 
 
@@ -569,11 +614,69 @@ async def api_book_upload(
     # AttributeError.
     if meta is None:
         raise HTTPException(status_code=500, detail="failed to save book")
+    logger.info(
+        "book uploaded: id=%d title=%r size=%d",
+        book_id,
+        meta.title,
+        len(data),
+    )
     return {
         "book_id": book_id,
         "title": meta.title,
         "total_pages": meta.total_pages,
     }
+
+
+# ---------- debug / observability (M14.1) ----------
+
+
+@app.get("/debug/health")
+def debug_health() -> dict:
+    """Return a small, secret-free liveness + metadata blob.
+
+    Public on purpose — designed for uptimerobot-style checks. Exposes
+    only aggregate counts and process metadata, nothing per-user. The
+    ``translate_counters`` block mirrors the M6.2 in-memory counters so
+    a quick "are we hitting cache?" sanity-check doesn't need a shell.
+    """
+    return {
+        "status": "ok",
+        "git_sha": _get_git_sha(),
+        "uptime_seconds": int((datetime.now(timezone.utc) - _startup_ts).total_seconds()),
+        "counts": {
+            "users": storage.count_users(),
+            "books": storage.count_books(),
+        },
+        "translate_counters": {
+            "hit": counters.translate_hit,
+            "miss": counters.translate_miss,
+        },
+    }
+
+
+@app.get("/debug/logs")
+def debug_logs(
+    n: int = 200,
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Return the tail of the in-memory log buffer as ``text/plain``.
+
+    Auth: ``get_current_user`` rejects anonymous callers with 401; the
+    extra admin check below returns 403 unless the signed-in user's
+    email matches ``ADMIN_EMAIL`` *and* that env var is non-empty
+    (keeping the route closed on hosts that forgot to set it). ``n`` is
+    clamped to ``[1, 1000]`` so a bogus query string can't ask for more
+    than the buffer actually holds.
+    """
+    admin_email = os.getenv("ADMIN_EMAIL", "")
+    if not admin_email or user.email != admin_email:
+        raise HTTPException(status_code=403)
+    n = min(max(n, 1), 1000)
+    lines = get_ring().tail(n)
+    return Response(
+        content="\n".join(lines),
+        media_type="text/plain; charset=utf-8",
+    )
 
 
 @app.get("/{full_path:path}")

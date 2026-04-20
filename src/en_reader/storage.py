@@ -851,6 +851,28 @@ def user_by_id(user_id: int) -> User | None:
     return _row_to_user(row) if row else None
 
 
+# ---------- tiny aggregate helpers (M14.1) ----------
+
+
+def count_users() -> int:
+    """Return the total number of rows in ``users``.
+
+    Includes the migration-seeded ``seed@local`` placeholder; callers that
+    want "real" users should subtract one, but for /debug/health we just
+    want a ballpark figure.
+    """
+    conn = get_db()
+    row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+    return int(row["n"]) if row else 0
+
+
+def count_books() -> int:
+    """Return the total number of rows in ``books`` across all users."""
+    conn = get_db()
+    row = conn.execute("SELECT COUNT(*) AS n FROM books").fetchone()
+    return int(row["n"]) if row else 0
+
+
 # ---------- test helpers ----------
 
 
