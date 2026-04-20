@@ -895,9 +895,16 @@ body.with-tabbar #root { padding-bottom: 82px; }
 #sheet.sheet.show { transform: translateX(-50%) translateY(0); }
 #toast.toast { top: 16px; }
 
-/* Mobile overrides: tighter paddings, full-width sheet. */
+/* Mobile overrides: full-width sheet. The earlier rule here also forced
+   ``padding-inline: 0`` on ``main`` — but its (.phone-body + #root + main)
+   specificity trumped every per-view padding (``.dictionary``, ``.reader``,
+   ``.library``, etc.) so mobile content rendered flush against the viewport
+   edges with no gutter. We keep ``max-width: none`` because the tablet+
+   ``main.reader { max-width: 720px }`` would otherwise leak into this
+   breakpoint through cascade once an author widens the ``min-width`` bound.
+*/
 @media (max-width: 480px) {
-  .phone-body > #root > main { max-width: none; padding-inline: 0; }
+  .phone-body > #root > main { max-width: none; }
   #sheet.sheet {
     left: 0; right: 0;
     transform: translateY(100%);
