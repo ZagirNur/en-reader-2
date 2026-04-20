@@ -1,22 +1,43 @@
+/* --- M16.1: design tokens (light + dark palettes). ---------------------- */
 :root {
   --bg: #f6f4ef; --bg-2: #ecebe5; --card: #ffffff;
   --ink: #14141a; --ink-2: #5c5c66; --ink-3: #9a9aa5;
   --line: #e1dfd5; --accent: #e85d2c; --accent-2: #ff7a45;
   --soft: #ecebe5;
+  --body-bg: #d8d3c7;
 }
 html.dark, body.dark {
   --bg: #0e0e10; --bg-2: #17171a; --card: #17171a;
   --ink: #ebebef; --ink-2: #9a9aa5; --ink-3: #5c5c66;
   --line: #27272e; --accent: #ff7a45; --accent-2: #ffa88a;
   --soft: #1f1f24;
+  --body-bg: #1a1a1e;
 }
 
+/* --- M16.1: base reset + typography. ----------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
 body {
   font-family: 'Geist', system-ui, -apple-system, sans-serif;
-  margin: 0;
-  background: var(--bg);
+  background: var(--body-bg);
   color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
 }
+h1, h2, h3 { font-family: 'Geist', sans-serif; letter-spacing: -0.02em; }
+h1 { font-size: 30px; font-weight: 600; margin: 0; }
+h2 { font-size: 22px; font-weight: 600; margin: 0; }
+h3 { font-size: 20px; font-weight: 600; margin: 0; }
+.serif { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
+.uplabel {
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: 500;
+}
+
+/* --- M16.1: layout utilities. ----------------------------------------- */
+.h-pad { padding-left: 22px; padding-right: 22px; }
+.v-gap-16 > * + * { margin-top: 16px; }
 
 .loader, .error { padding: 2rem; text-align: center; }
 button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
@@ -108,10 +129,55 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 .sheet-from-book .uplabel { margin-bottom: 6px; }
 .sheet-from-book-text { font-size: 13px; line-height: 1.5; color: var(--ink-2); }
 .sheet-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
-.btn { border: none; border-radius: 8px; padding: 0.6rem 1rem; font: inherit; cursor: pointer; }
+/* --- M16.1: generic button system. ------------------------------------ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px 20px; border-radius: 12px;
+  font-family: inherit; font-size: 15px; font-weight: 600;
+  border: none; cursor: pointer;
+  transition: transform 0.08s, background 0.15s;
+}
+.btn:active { transform: scale(0.97); }
 .btn.primary { background: var(--ink); color: var(--bg); }
-.btn.ghost { background: var(--bg-2); color: var(--ink); }
+.btn.accent  { background: var(--accent); color: #fff; }
+.btn.ghost   { background: var(--bg-2); color: var(--ink); }
+.btn.full    { width: 100%; }
+.btn.sm      { padding: 10px 14px; font-size: 13px; border-radius: 10px; }
 .btn:disabled { opacity: 0.7; cursor: default; }
+
+/* --- M16.1: chips. ---------------------------------------------------- */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 500;
+  background: var(--bg-2); color: var(--ink-2);
+  border: 1px solid transparent; cursor: pointer;
+  font-family: inherit;
+}
+.chip.on { background: var(--ink); color: var(--bg); }
+.chip .n { opacity: 0.5; font-weight: 400; margin-left: 2px; }
+
+/* --- M16.1: generic progress bar. ------------------------------------- */
+.pbar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.pbar > i { display: block; height: 100%; background: var(--accent); }
+
+/* --- M16.1: generic cover box (cover-preset classes .c-* defined below). */
+.cover {
+  aspect-ratio: 2 / 3; border-radius: 6px; overflow: hidden;
+  position: relative; display: flex; flex-direction: column;
+  padding: 12px 10px; color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06), 0 10px 24px -14px rgba(0,0,0,0.3);
+}
+.cover::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.1), transparent 30%, rgba(0,0,0,0.18));
+  pointer-events: none;
+}
+.cover .ct { font-family: 'Instrument Serif', Georgia, serif; font-size: 16px; line-height: 1.05; }
+.cover .ca {
+  margin-top: auto; font-size: 8px; letter-spacing: 0.14em;
+  text-transform: uppercase; opacity: 0.78; font-weight: 500;
+}
 
 /* --- Library (M9.2) --- */
 .library { max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
@@ -270,3 +336,11 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
   border-radius: 4px;
 }
 .logout-btn:hover { color: var(--ink); background: var(--bg-2); }
+
+/* --- M16.1: accessibility — honor the user's reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

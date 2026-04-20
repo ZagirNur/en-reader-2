@@ -1728,12 +1728,46 @@ function render() {
   }
 }
 
-// --- bootstrap ---
-{
-  const dark = (localStorage.theme === "dark") ||
-    (localStorage.theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-  if (dark) document.documentElement.classList.add("dark");
+// --- M16.1: theme API --------------------------------------------------
+// Named helpers (vs. the old inline IIFE) so later tasks — the settings
+// sheet from M9.3 in particular — can flip the theme without duplicating
+// the localStorage / prefers-color-scheme handshake. The canonical
+// storage key is `en-reader.theme`; if the legacy pre-M16.1 `theme` key
+// is present we migrate it once and then remove it so the two never
+// drift out of sync.
+const THEME_KEY = "en-reader.theme";
+
+function getTheme() {
+  const v = localStorage.getItem(THEME_KEY);
+  return v === "dark" || v === "light" ? v : null;
 }
+
+function currentTheme() {
+  // One-shot migration from the M3.3 key (`localStorage.theme`).
+  const saved = getTheme();
+  if (saved) return saved;
+  const legacy = localStorage.getItem("theme");
+  if (legacy === "dark" || legacy === "light") {
+    localStorage.setItem(THEME_KEY, legacy);
+    localStorage.removeItem("theme");
+    return legacy;
+  }
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function setTheme(t) {
+  const theme = t === "dark" ? "dark" : "light";
+  document.documentElement.classList.toggle("dark", theme === "dark");
+  try { localStorage.setItem(THEME_KEY, theme); } catch (_e) { /* quota/private-mode */ }
+}
+
+// Expose on window for the future settings sheet (and for tests/devtools).
+window.setTheme = setTheme;
+window.currentTheme = currentTheme;
+window.THEME_KEY = THEME_KEY;
+
+// --- bootstrap ---
+setTheme(currentTheme());
 window.addEventListener("popstate", onPopState);
 
 // M11.3 + M10.5: on boot we probe /auth/me first to distinguish
