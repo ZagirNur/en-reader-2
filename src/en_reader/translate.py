@@ -28,6 +28,7 @@ from typing import Any
 from google import genai
 
 from . import storage
+from .metrics import counters
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +169,11 @@ def _cached_llm_call(
     key = _prompt_hash(model_name, system, user)
     cached = storage.llm_cache_get(key)
     if cached is not None:
+        counters.llm_cache_hit += 1
         logger.info("llm cache HIT key=%s len=%d", key[:12], len(cached))
         return cached, "cache"
 
+    counters.llm_cache_miss += 1
     logger.info("llm cache MISS key=%s", key[:12])
     last_reason = "no attempts made"
     for attempt in range(1, _MAX_ATTEMPTS + 1):

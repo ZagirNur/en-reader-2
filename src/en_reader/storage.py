@@ -591,6 +591,19 @@ def llm_cache_get(prompt_hash: str) -> str | None:
     return row["response"] if row else None
 
 
+def llm_cache_count() -> int:
+    """Return the total number of rows in ``llm_cache``.
+
+    Surfaced on ``/debug/health`` so an operator can watch the cache
+    grow and confirm that new prompts are being persisted (and old ones
+    are being reused by ``llm_cache_get``). Cheap: SQLite's ``COUNT(*)``
+    on a small table is sub-millisecond.
+    """
+    conn = get_db()
+    row = conn.execute("SELECT COUNT(*) AS n FROM llm_cache").fetchone()
+    return int(row["n"] or 0)
+
+
 def llm_cache_put(prompt_hash: str, model: str, response: str) -> None:
     """Insert a cache row; on conflict keep the first write (OR IGNORE).
 

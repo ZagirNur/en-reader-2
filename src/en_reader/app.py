@@ -1539,6 +1539,17 @@ def debug_health() -> dict:
             "hit": counters.translate_hit,
             "miss": counters.translate_miss,
         },
+        # M19.7: prompt-hash cache visibility. ``hit`` / ``miss`` are
+        # process-level counters from ``translate._cached_llm_call`` and
+        # climb independently of dict state — watching them while a
+        # reader scrolls through a known book should show ``hit`` dominate.
+        # ``rows`` is the size of the persisted ``llm_cache`` table — one
+        # row per unique (model, system, user-prompt) tuple.
+        "llm_cache": {
+            "hit": counters.llm_cache_hit,
+            "miss": counters.llm_cache_miss,
+            "rows": storage.llm_cache_count(),
+        },
         # M19.6: 8-hex fingerprint of SECRET_KEY. Stable across redeploys
         # means sessions survive; a flapping value is the smoking gun for
         # a sessions-dropping regression.
