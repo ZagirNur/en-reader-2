@@ -30,7 +30,7 @@ _FIXTURE = "tests/fixtures/golden/02-phrasal.txt"
 def fake_translate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub out `translate_one` so `/api/translate` returns a fixed string."""
 
-    def _fake(unit_text: str, sentence: str) -> str:  # noqa: ARG001
+    def _fake(*_args, **_kwargs) -> str:  # noqa: ARG001
         return "зловещий"
 
     monkeypatch.setattr("en_reader.app.translate_one", _fake)

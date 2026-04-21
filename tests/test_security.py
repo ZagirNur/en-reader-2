@@ -102,7 +102,7 @@ def test_origin_check_post_matching_origin_passes(
     """
     monkeypatch.setattr(
         "en_reader.app.translate_one",
-        lambda unit_text, sentence: "ок",
+        lambda *_a, **_k: "ок",
     )
     r = client.post(
         "/api/translate",
@@ -123,7 +123,7 @@ def test_origin_check_absent_origin_passes(
     """
     monkeypatch.setattr(
         "en_reader.app.translate_one",
-        lambda unit_text, sentence: "ок",
+        lambda *_a, **_k: "ок",
     )
     # TestClient only sets Origin/Referer if the caller does — so
     # passing no ``headers`` kwarg gives us the "neither present" case.

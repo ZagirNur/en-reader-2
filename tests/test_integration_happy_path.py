@@ -77,11 +77,14 @@ def test_signup_upload_translate_cache_dictionary() -> None:
         assert r1.json()["ru"] == "поднять"
         assert mock.call_count == 1
 
-        # 5. Second POST must short-circuit on the cached dict row.
+        # 5. Second POST still invokes ``translate_one`` (M19.1 moved the
+        # cache from ``user_dictionary`` into the prompt-hash ``llm_cache``
+        # inside ``translate_one`` itself). The user observes the same
+        # ``ru`` but the app-level entry point is no longer short-circuited.
         r2 = client.post("/api/translate", json=payload)
         assert r2.status_code == 200, r2.text
         assert r2.json()["ru"] == "поднять"
-        assert mock.call_count == 1  # still one — cache hit, no LLM call
+        assert mock.call_count == 2
 
     # 6. Dictionary endpoint reflects the translation.
     resp = client.get("/api/dictionary")

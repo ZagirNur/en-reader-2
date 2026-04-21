@@ -1389,29 +1389,13 @@ function renderReader() {
   // Prime the progress bar so it reflects the initially-visible page.
   runScrollTick();
 
-  // Apply auto-translations post-render. Pass 1: per-page auto_unit_ids
-  // (Units whose lemma matched the server-side dictionary).
-  for (const { page, section } of pageSections) {
-    const autoIds = page.auto_unit_ids || [];
-    for (const unitId of autoIds) {
-      // Look up the unit's lemma from the page payload so we can find the
-      // right translation in state.userDict (keys are lowercased lemmas).
-      const unit = (page.units || []).find((u) => u.id === unitId);
-      if (!unit) continue;
-      const ru = state.userDict[unit.lemma.toLowerCase()];
-      if (!ru) continue;
-      applyAutoTranslation(section, unitId, ru);
-    }
-  }
-  // Pass 2: sweep plain (non-unit) `.word[data-lemma=...]` spans across the
-  // whole reader once, for every lemma currently in state.userDict.
-  for (const lemma of Object.keys(state.userDict)) {
-    const ru = state.userDict[lemma];
-    const sel = `.word[data-lemma="${CSS.escape(lemma)}"]:not(.translated)`;
-    main.querySelectorAll(sel).forEach((span) => {
-      replaceWithTranslation(span, ru);
-    });
-  }
+  // M19.1: per-instance translation. Every `.word` span whose lemma is
+  // already in the user's dictionary gets its own 3-sentence-context
+  // translation call. The server-side prompt-hash cache makes repeat
+  // renders free; concurrent page insertions trigger their own
+  // per-section sweep via `applyTranslationsToSection`. We run this in
+  // the background so the reader is interactive immediately.
+  preloadPageTranslations(main).catch(() => {});
 
   // M10.3: wire up sentinel-based lazy loading of neighboring pages. The
   // observers live for the lifetime of the reader view; `teardownReaderScroll`
@@ -1464,22 +1448,15 @@ function renderReader() {
 // visually consistent with its neighbors without re-sweeping the whole
 // reader DOM on every prepend/append.
 function applyTranslationsToSection(page, section) {
-  const autoIds = page.auto_unit_ids || [];
-  for (const unitId of autoIds) {
-    const unit = (page.units || []).find((u) => u.id === unitId);
-    if (!unit) continue;
-    const ru = state.userDict[unit.lemma.toLowerCase()];
-    if (!ru) continue;
-    applyAutoTranslation(section, unitId, ru);
-  }
-  // Pass-2 lemma sweep within the new section only (not the full reader).
-  for (const lemma of Object.keys(state.userDict)) {
-    const ru = state.userDict[lemma];
-    const sel = `.word[data-lemma="${CSS.escape(lemma)}"]:not(.translated)`;
-    section.querySelectorAll(sel).forEach((span) => {
-      replaceWithTranslation(span, ru);
-    });
-  }
+  // M19.1: a freshly-inserted page (±1 from the visible viewport thanks
+  // to the IntersectionObserver rootMargin) triggers per-instance
+  // translation for every word whose lemma the user already knows. The
+  // sweep runs in the background so the insert doesn't block scroll.
+  // `page` is intentionally unused now — the old `auto_unit_ids` hint
+  // was replaced by a DOM scan so the cross-sentence context lookup
+  // (needed for the LLM prompt) can reuse `contextFor()` directly.
+  void page;
+  preloadPageTranslations(section).catch(() => {});
 }
 
 // M18.3b: IntersectionObserver only emits on boundary *crossings*, so if
@@ -3016,12 +2993,94 @@ function renderLogin() {
   root.appendChild(main);
 }
 
-// --- inline translation (M4.2) ---
+// --- inline translation (M4.2, rewritten M19.1 for per-instance context) ---
+
+// M19.1: every `.word` span gets its own translation request with ±1
+// sentence of surrounding context. Identical (lemma, prev, sent, next)
+// tuples are deduplicated client-side via `_translationInflight` so two
+// spans in the same sentence collapse into a single HTTP round-trip,
+// and the server's prompt-hash cache makes a second page render free.
+const _translationInflight = new Map();
+const _PRELOAD_CONCURRENCY = 4;
+
 function getSentenceFor(span) {
   const sentEl = span.closest("[data-sentence-id]");
   if (sentEl) return sentEl.textContent;
   const page = span.closest(".page-body");
   return page ? page.textContent.slice(0, 300) : "";
+}
+
+function contextFor(span) {
+  const sentEl = span.closest("[data-sentence-id]");
+  if (!sentEl) {
+    return { prev: "", sentence: getSentenceFor(span), next: "" };
+  }
+  const sentence = sentEl.textContent;
+  const pageBody = sentEl.closest(".page-body");
+  let prev = "";
+  let next = "";
+  if (pageBody) {
+    const sentences = Array.from(pageBody.querySelectorAll("[data-sentence-id]"));
+    const idx = sentences.indexOf(sentEl);
+    if (idx > 0) {
+      prev = sentences[idx - 1].textContent;
+    } else {
+      // At the top of a page, look one page up for the last sentence so
+      // the context stays continuous across a page seam. Reader layout:
+      // `.page > .page-body`; neighbouring pages are siblings under the
+      // book container.
+      const pageEl = pageBody.closest(".page");
+      const prevPageBody = pageEl?.previousElementSibling?.querySelector?.(".page-body");
+      const prevSents = prevPageBody ? prevPageBody.querySelectorAll("[data-sentence-id]") : null;
+      if (prevSents && prevSents.length) {
+        prev = prevSents[prevSents.length - 1].textContent;
+      }
+    }
+    if (idx >= 0 && idx < sentences.length - 1) {
+      next = sentences[idx + 1].textContent;
+    } else {
+      const pageEl = pageBody.closest(".page");
+      const nextPageBody = pageEl?.nextElementSibling?.querySelector?.(".page-body");
+      const nextSents = nextPageBody ? nextPageBody.querySelectorAll("[data-sentence-id]") : null;
+      if (nextSents && nextSents.length) {
+        next = nextSents[0].textContent;
+      }
+    }
+  }
+  return { prev, sentence, next };
+}
+
+function translationKey(lemma, ctx) {
+  return `${lemma}||${ctx.prev}||${ctx.sentence}||${ctx.next}`;
+}
+
+// Fetch (or reuse an in-flight) translation for a single span. The
+// response is shared between concurrent callers via the inflight map so
+// every distinct prompt lands in exactly one POST. The map entry is
+// evicted 30 s after resolution to keep memory bounded across long
+// reading sessions.
+async function fetchTranslationFor(span) {
+  const lemma = span.dataset.lemma;
+  const unitText = (span.dataset.originalText || span.textContent).trim();
+  const ctx = contextFor(span);
+  const key = translationKey(lemma, ctx);
+  if (_translationInflight.has(key)) {
+    return _translationInflight.get(key);
+  }
+  const bookId = state.currentBook?.bookId ?? null;
+  const promise = apiPost("/api/translate", {
+    unit_text: unitText,
+    sentence: ctx.sentence,
+    prev_sentence: ctx.prev,
+    next_sentence: ctx.next,
+    lemma,
+    source_book_id: bookId,
+  }).then((r) => r.ru);
+  _translationInflight.set(key, promise);
+  promise.finally(() => {
+    setTimeout(() => _translationInflight.delete(key), 30_000);
+  });
+  return promise;
 }
 
 async function onWordTap(e) {
@@ -3036,46 +3095,102 @@ async function onWordTap(e) {
 
 async function translateAndReplace(span) {
   if (span.classList.contains("loading")) return;
+  if (span.classList.contains("translated")) return;
   const lemma = span.dataset.lemma;
   const pairId = span.dataset.pairId;
-  const unitText = span.textContent.trim();
-  const sentence = getSentenceFor(span);
 
   span.classList.add("loading");
 
   let ru;
   try {
-    const r = await apiPost("/api/translate", {
-      unit_text: unitText,
-      sentence,
-      lemma,
-    });
-    ru = r.ru;
+    ru = await fetchTranslationFor(span);
   } catch (err) {
     span.classList.remove("loading");
     toast("Не удалось перевести");
     return;
   }
 
-  withScrollAnchor(() => {
-    state.userDict[lemma] = ru;
+  const firstForLemma = !(lemma in state.userDict);
 
-    const lemmaSel = `.word[data-lemma="${CSS.escape(lemma)}"]`;
-    document.querySelectorAll(lemmaSel).forEach((w) => {
-      replaceWithTranslation(w, ru);
-    });
+  withScrollAnchor(() => {
+    // Track the lemma for the prefetch sweep, but only replace THIS
+    // span (and its paired split-PV half, which lives in the same
+    // sentence and shares context by construction). Other instances
+    // will be translated individually by the prefetch scan.
+    state.userDict[lemma] = ru;
+    replaceWithTranslation(span, ru);
     if (pairId != null) {
       const pairSel = `.word[data-pair-id="${CSS.escape(pairId)}"]`;
       document.querySelectorAll(pairSel).forEach((w) => {
         if (!w.classList.contains("translated")) replaceWithTranslation(w, ru);
       });
     }
-
     span.classList.add("highlighted");
     setTimeout(() => span.classList.remove("highlighted"), 800);
   });
 
-  toast("В словарь ✓");
+  if (firstForLemma) {
+    toast("В словарь ✓");
+    // Kick off a sweep across the rest of the reader so every already-
+    // rendered instance of this lemma gets its own context-specific
+    // translation. Runs in the background, bounded by _PRELOAD_CONCURRENCY.
+    const main = document.getElementById("root");
+    if (main) preloadPageTranslations(main).catch(() => {});
+  }
+}
+
+// M19.1: iterate every `.word` span under ``scopeEl`` and trigger a
+// per-instance translation for those whose lemma is already in
+// ``state.userDict``. Each span gets its own 3-sentence context, so
+// the LLM can disambiguate senses between occurrences. Runs with a
+// small concurrency cap so scrolling into a dense page doesn't flood
+// the server or the rate-limiter. Idempotent: already-translated /
+// in-flight spans are skipped.
+async function preloadPageTranslations(scopeEl) {
+  if (!scopeEl) return;
+  const lemmas = new Set(Object.keys(state.userDict));
+  if (lemmas.size === 0) return;
+  const tasks = [];
+  scopeEl.querySelectorAll(".word").forEach((span) => {
+    if (span.classList.contains("translated")) return;
+    if (span.classList.contains("loading")) return;
+    if (!lemmas.has(span.dataset.lemma)) return;
+    tasks.push(span);
+  });
+  if (tasks.length === 0) return;
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < tasks.length) {
+      const span = tasks[cursor++];
+      // A concurrent translateAndReplace may have handled this span in
+      // the gap between task collection and dispatch — re-check.
+      if (span.classList.contains("translated")) continue;
+      if (span.classList.contains("loading")) continue;
+      span.classList.add("loading");
+      try {
+        const ru = await fetchTranslationFor(span);
+        withScrollAnchor(() => {
+          replaceWithTranslation(span, ru);
+          const pairId = span.dataset.pairId;
+          if (pairId != null) {
+            const pairSel = `.word[data-pair-id="${CSS.escape(pairId)}"]`;
+            document.querySelectorAll(pairSel).forEach((w) => {
+              if (!w.classList.contains("translated")) {
+                replaceWithTranslation(w, ru);
+              }
+            });
+          }
+        });
+      } catch (_err) {
+        span.classList.remove("loading");
+      }
+    }
+  };
+  const workers = Array.from(
+    { length: Math.min(_PRELOAD_CONCURRENCY, tasks.length) },
+    worker,
+  );
+  await Promise.all(workers);
 }
 
 function replaceWithTranslation(span, ru) {

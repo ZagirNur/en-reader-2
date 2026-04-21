@@ -98,7 +98,7 @@ def test_translate_endpoint_success_for_m4_2(
 ) -> None:
     # Mirror the pattern from tests/test_translate.py — patch the symbol
     # imported into app.py so the endpoint returns cleanly without Gemini.
-    def _fake(unit_text: str, sentence: str) -> str:
+    def _fake(*_args, **_kwargs) -> str:
         return "зловещий"
 
     monkeypatch.setattr("en_reader.app.translate_one", _fake)

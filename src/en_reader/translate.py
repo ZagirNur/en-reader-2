@@ -1,15 +1,25 @@
-"""Gemini-backed English-to-Russian translation for en-reader.
+"""Gemini-backed LLM calls for en-reader (translation + training cards).
 
-Single public entry point: :func:`translate_one`. Callers pass the unit
-(word or short phrase) and the full sentence it appears in; the function
-returns a short Russian translation or raises :class:`TranslateError`.
+Two public entry points:
 
-Validation, retries (with exponential backoff), and logging are handled here.
-No caching — that arrives in M6.1.
+* :func:`translate_one` — English word/phrase → short Russian translation,
+  with ± 1 sentence of surrounding context (M19.1).
+* :func:`generate_training_card` — AI-built SRS card for a lemma, using
+  the original context the word was first met in.
+
+Both funnel through :func:`_cached_llm_call`, a prompt-hash cache backed
+by the ``llm_cache`` SQLite table (M19.1). The key includes the model
+name + the full system + user prompt, so per-instance translation
+requests that happen to share a sentence context de-dupe naturally
+without the caller knowing.
+
+Retries (up to 3 with exponential backoff), input validation, and
+structured logging stay here so the API handlers remain boring.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -17,11 +27,14 @@ from typing import Any
 
 from google import genai
 
+from . import storage
+
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """You are a professional English-to-Russian literary translator.
-You receive a single English word or short phrase and the sentence it appears in.
+TRANSLATE_SYSTEM_PROMPT = """You are a professional English-to-Russian literary translator.
+You receive a single English word or short phrase and the sentence it appears in,
+plus (optionally) the previous and next sentence for context.
 Return ONLY the best Russian translation of the word/phrase, in context.
 Rules:
 - One short translation, no variants, no explanations.
@@ -33,16 +46,31 @@ Rules:
 - Max 60 characters."""
 
 
+CARD_SYSTEM_PROMPT = """You are building a compact flash-card for a Russian-speaking
+learner of English. You receive one English word or phrase, its short Russian
+translation, and the example sentence the learner first met it in.
+
+Return a Markdown card with EXACTLY these four sections, no preamble, no trailing text:
+
+**Значение:** one short Russian sentence explaining the meaning and usage nuance (max 120 chars).
+**Пример:** one clear English sentence using the word (NOT the one provided). Max 120 chars.
+**Синонимы:** up to 3 common English synonyms, comma-separated. Skip the line if none fit.
+**Запомни:** one short mnemonic or usage hint in Russian (max 100 chars).
+
+Keep the whole card under 600 characters. No HTML, no links, no headings above level-2."""
+
+
 _MAX_ATTEMPTS = 3
 _BACKOFFS = (0.5, 1.0, 2.0)
-_MAX_LEN = 60
+_MAX_TRANSLATE_LEN = 60
+_MAX_CARD_LEN = 1000
 
 # Lazy module-level Gemini client; initialized on first call.
 _client: genai.Client | None = None
 
 
 class TranslateError(Exception):
-    """Raised when all attempts to obtain a valid translation fail."""
+    """Raised when all attempts to obtain a valid response fail."""
 
 
 def _sleep(seconds: float) -> None:
@@ -64,7 +92,7 @@ def _get_client() -> genai.Client:
     return _client
 
 
-def _is_valid(text: str) -> bool:
+def _is_valid_translation(text: str) -> bool:
     """Return True if ``text`` is a plausible single-line translation."""
     if not text or not text.strip():
         return False
@@ -72,74 +100,176 @@ def _is_valid(text: str) -> bool:
         return False
     if "\n" in text or "\r" in text:
         return False
-    if len(text) > _MAX_LEN:
+    if len(text) > _MAX_TRANSLATE_LEN:
         return False
     return True
 
 
-def _call_model(client: Any, model_name: str, user_prompt: str) -> str:
+def _is_valid_card(text: str) -> bool:
+    """Return True if ``text`` looks like a card (non-empty, bounded length)."""
+    if not text or not text.strip():
+        return False
+    if len(text) > _MAX_CARD_LEN:
+        return False
+    return True
+
+
+def _prompt_hash(model: str, system: str, user: str) -> str:
+    """Compute the content-addressed cache key for an LLM call.
+
+    Folds in the model name so the same prompt against
+    ``gemini-2.5-flash-lite`` and ``gemini-2.5-pro`` does not collide.
+    Uses a version prefix so we can invalidate the whole cache by bumping
+    the prefix if the prompt contract changes in a backwards-incompatible
+    way.
+    """
+    h = hashlib.sha256()
+    h.update(b"v1\n")
+    h.update(model.encode("utf-8"))
+    h.update(b"\n---SYSTEM---\n")
+    h.update(system.encode("utf-8"))
+    h.update(b"\n---USER---\n")
+    h.update(user.encode("utf-8"))
+    return h.hexdigest()
+
+
+def _call_model(client: Any, model_name: str, system: str, user_prompt: str) -> str:
+    """One Gemini round-trip. No retries, no cache — pure I/O."""
     resp = client.models.generate_content(
         model=model_name,
         contents=user_prompt,
-        config={"system_instruction": SYSTEM_PROMPT, "temperature": 0.2},
+        config={"system_instruction": system, "temperature": 0.2},
     )
     return (resp.text or "").strip()
 
 
-def translate_one(unit_text: str, sentence: str) -> str:
-    """Translate ``unit_text`` (in context of ``sentence``) to Russian.
+def _cached_llm_call(system: str, user: str, *, validator, model: str | None = None) -> str:
+    """Call Gemini (with retries), passing through the SQLite prompt-hash cache.
 
-    Attempts up to 3 calls with exponential backoff between failures.
-    A failure is either an SDK exception or a reply that fails validation
-    (empty, contains ``<``/``>``, multi-line, or longer than 60 characters).
+    Key is ``sha256(v1 || model || system || user)``. Cache HITs bypass
+    the SDK entirely; MISSes go through the ``_MAX_ATTEMPTS`` retry loop
+    with ``_BACKOFFS`` delays, and the first valid response is written
+    back. ``validator`` is a callable returning ``True`` iff the text is
+    usable — mis-shaped replies are treated like SDK errors.
 
-    Raises :class:`TranslateError` if no attempt succeeds.
-
-    .. note::
-       When the environment variable ``E2E_MOCK_LLM`` is set to ``"1"`` this
-       function short-circuits to ``f"RU:{unit_text}"`` without contacting
-       Gemini or running the retry loop. The hook is used exclusively by
-       Playwright E2E tests (see :mod:`tests.e2e.conftest`) so browser
-       flows remain deterministic and offline.
+    ``E2E_MOCK_LLM=1`` short-circuits every call to a fixed prefix so
+    Playwright/E2E runs stay offline and deterministic.
     """
-    # M15.6: E2E tests stub the Gemini call entirely via this env var.
-    # Keep the check above the retry loop so the mock path doesn't pay
-    # backoff/sleep costs, and the return is byte-stable for assertions.
+    model_name = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+
     if os.environ.get("E2E_MOCK_LLM") == "1":
-        return f"RU:{unit_text}"
+        return f"RU:{user[:40]}"
 
-    logger.info("translate request: unit=%r sentence=%r", unit_text, sentence[:100])
+    key = _prompt_hash(model_name, system, user)
+    cached = storage.llm_cache_get(key)
+    if cached is not None:
+        logger.info("llm cache HIT key=%s len=%d", key[:12], len(cached))
+        return cached
 
-    user_prompt = f"Word: {unit_text}\nSentence: {sentence}"
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
-
-    started = time.monotonic()
+    logger.info("llm cache MISS key=%s", key[:12])
     last_reason = "no attempts made"
-
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             client = _get_client()
-            text = _call_model(client, model_name, user_prompt)
+            text = _call_model(client, model_name, system, user)
         except TranslateError:
-            # Missing API key etc. — no point retrying.
             raise
         except Exception as exc:  # noqa: BLE001 — any SDK failure is retryable
             last_reason = f"sdk error: {exc!r}"
         else:
-            if _is_valid(text):
-                latency = time.monotonic() - started
-                logger.info(
-                    "translate ok: unit=%r ru=%r latency=%.2fs attempts=%d",
-                    unit_text,
-                    text,
-                    latency,
-                    attempt,
-                )
+            if validator(text):
+                storage.llm_cache_put(key, model_name, text)
                 return text
             last_reason = f"invalid reply (len={len(text)})"
-
         if attempt < _MAX_ATTEMPTS:
             _sleep(_BACKOFFS[attempt - 1])
+    logger.warning("llm call failed after %d attempts (%s)", _MAX_ATTEMPTS, last_reason)
+    raise TranslateError(f"llm call failed after {_MAX_ATTEMPTS} attempts ({last_reason})")
 
-    logger.warning("translate failed after %d attempts: unit=%r", _MAX_ATTEMPTS, unit_text)
-    raise TranslateError(f"translate_one failed after {_MAX_ATTEMPTS} attempts ({last_reason})")
+
+def _build_translate_prompt(
+    unit_text: str,
+    sentence: str,
+    prev_sentence: str = "",
+    next_sentence: str = "",
+) -> str:
+    """Compose the user-side prompt text sent to Gemini for translation.
+
+    Always emits the same four-line layout — empty strings for missing
+    neighbours — so the cache key is stable for identical contexts
+    regardless of how the caller chose to represent "no neighbour". The
+    model has been instructed to treat blank neighbour lines as unknown.
+    """
+    prev = (prev_sentence or "").strip()
+    nxt = (next_sentence or "").strip()
+    return f"Word: {unit_text}\n" f"Previous: {prev}\n" f"Sentence: {sentence}\n" f"Next: {nxt}"
+
+
+def translate_one(
+    unit_text: str,
+    sentence: str,
+    prev_sentence: str = "",
+    next_sentence: str = "",
+) -> str:
+    """Translate ``unit_text`` (in context) to Russian, with ± 1 sentence context.
+
+    M19.1: the prompt now includes the preceding and following sentence
+    when available, so per-instance translation carries enough context
+    for word-sense disambiguation. The result is cached by prompt hash
+    in ``llm_cache``, so the same (word, 3-sentence window) is a free
+    lookup on replay.
+
+    Raises :class:`TranslateError` if Gemini fails three times with
+    backoff, or the reply fails validation (empty, contains ``<``/``>``,
+    multi-line, or longer than 60 characters).
+    """
+    logger.info(
+        "translate request: unit=%r sentence=%r prev=%r next=%r",
+        unit_text,
+        sentence[:80],
+        prev_sentence[:80] if prev_sentence else "",
+        next_sentence[:80] if next_sentence else "",
+    )
+    user_prompt = _build_translate_prompt(unit_text, sentence, prev_sentence, next_sentence)
+    started = time.monotonic()
+    ru = _cached_llm_call(
+        TRANSLATE_SYSTEM_PROMPT,
+        user_prompt,
+        validator=_is_valid_translation,
+    )
+    latency = time.monotonic() - started
+    logger.info("translate ok: unit=%r ru=%r latency=%.2fs", unit_text, ru, latency)
+    return ru
+
+
+def generate_training_card(
+    unit_text: str,
+    ru_translation: str,
+    context_sentence: str,
+) -> str:
+    """Build a Markdown SRS card for ``unit_text`` using ``context_sentence``.
+
+    Runs against the same Gemini model as translation but with a distinct
+    system prompt (see :data:`CARD_SYSTEM_PROMPT`). Goes through the
+    prompt-hash cache, so a lemma seen in the same sentence context as
+    an earlier user will reuse that card for free.
+
+    Raises :class:`TranslateError` on total failure. The caller is
+    expected to run this in the background and swallow the exception —
+    a missing card is a graceful degradation.
+    """
+    user_prompt = (
+        f"Word: {unit_text}\n"
+        f"Russian translation: {ru_translation}\n"
+        f"Context sentence: {context_sentence}"
+    )
+    logger.info("card request: unit=%r", unit_text)
+    started = time.monotonic()
+    card = _cached_llm_call(
+        CARD_SYSTEM_PROMPT,
+        user_prompt,
+        validator=_is_valid_card,
+    )
+    latency = time.monotonic() - started
+    logger.info("card ok: unit=%r len=%d latency=%.2fs", unit_text, len(card), latency)
+    return card
