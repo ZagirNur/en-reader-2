@@ -78,5 +78,11 @@ class RateLimit:
 # Module-level singletons wired into app.py. Tests reset these between
 # cases via an autouse fixture in conftest so a flood in one test doesn't
 # leak hits into the next.
-rl_translate = RateLimit(max_hits=60, window_seconds=60)  # per user
+# M19.1 made the reader fire per-instance translations on both manual clicks
+# and background preload — a dense page can generate 60+ calls in seconds.
+# Almost all land in the free ``llm_cache`` lookup path, so the old 60/min
+# ceiling was throttling cache hits for no good reason. 300/min gives the
+# preload sweep headroom without blowing up the Gemini budget, which is
+# guarded by the in-process prompt-hash cache regardless of this limit.
+rl_translate = RateLimit(max_hits=300, window_seconds=60)  # per user
 rl_upload = RateLimit(max_hits=5, window_seconds=3600)  # per user
