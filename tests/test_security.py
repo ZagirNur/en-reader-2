@@ -102,7 +102,7 @@ def test_origin_check_post_matching_origin_passes(
     """
     monkeypatch.setattr(
         "en_reader.app.translate_one",
-        lambda *_a, **_k: "ок",
+        lambda *_a, **_k: ("ок", "llm"),
     )
     r = client.post(
         "/api/translate",
@@ -110,7 +110,7 @@ def test_origin_check_post_matching_origin_passes(
         headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"ru": "ок"}
+    assert r.json() == {"ru": "ок", "source": "llm"}
 
 
 def test_origin_check_absent_origin_passes(
@@ -123,7 +123,7 @@ def test_origin_check_absent_origin_passes(
     """
     monkeypatch.setattr(
         "en_reader.app.translate_one",
-        lambda *_a, **_k: "ок",
+        lambda *_a, **_k: ("ок", "llm"),
     )
     # TestClient only sets Origin/Referer if the caller does — so
     # passing no ``headers`` kwarg gives us the "neither present" case.

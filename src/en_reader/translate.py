@@ -143,28 +143,33 @@ def _call_model(client: Any, model_name: str, system: str, user_prompt: str) -> 
     return (resp.text or "").strip()
 
 
-def _cached_llm_call(system: str, user: str, *, validator, model: str | None = None) -> str:
+def _cached_llm_call(
+    system: str, user: str, *, validator, model: str | None = None
+) -> tuple[str, str]:
     """Call Gemini (with retries), passing through the SQLite prompt-hash cache.
+
+    Returns ``(response_text, source)`` where ``source`` is one of:
+
+    * ``"mock"`` — the ``E2E_MOCK_LLM=1`` short-circuit fired.
+    * ``"cache"`` — found in ``llm_cache`` by prompt hash; no SDK call.
+    * ``"llm"`` — actual Gemini round-trip (result then written to cache).
 
     Key is ``sha256(v1 || model || system || user)``. Cache HITs bypass
     the SDK entirely; MISSes go through the ``_MAX_ATTEMPTS`` retry loop
     with ``_BACKOFFS`` delays, and the first valid response is written
     back. ``validator`` is a callable returning ``True`` iff the text is
     usable — mis-shaped replies are treated like SDK errors.
-
-    ``E2E_MOCK_LLM=1`` short-circuits every call to a fixed prefix so
-    Playwright/E2E runs stay offline and deterministic.
     """
     model_name = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
     if os.environ.get("E2E_MOCK_LLM") == "1":
-        return f"RU:{user[:40]}"
+        return f"RU:{user[:40]}", "mock"
 
     key = _prompt_hash(model_name, system, user)
     cached = storage.llm_cache_get(key)
     if cached is not None:
         logger.info("llm cache HIT key=%s len=%d", key[:12], len(cached))
-        return cached
+        return cached, "cache"
 
     logger.info("llm cache MISS key=%s", key[:12])
     last_reason = "no attempts made"
@@ -179,7 +184,7 @@ def _cached_llm_call(system: str, user: str, *, validator, model: str | None = N
         else:
             if validator(text):
                 storage.llm_cache_put(key, model_name, text)
-                return text
+                return text, "llm"
             last_reason = f"invalid reply (len={len(text)})"
         if attempt < _MAX_ATTEMPTS:
             _sleep(_BACKOFFS[attempt - 1])
@@ -210,10 +215,15 @@ def translate_one(
     sentence: str,
     prev_sentence: str = "",
     next_sentence: str = "",
-) -> str:
+) -> tuple[str, str]:
     """Translate ``unit_text`` (in context) to Russian, with ± 1 sentence context.
 
-    M19.1: the prompt now includes the preceding and following sentence
+    Returns ``(ru, source)`` where ``source`` is one of ``"cache"``,
+    ``"llm"``, or ``"mock"`` — see :func:`_cached_llm_call`. The caller
+    can forward this to the client so the UI can show whether a click
+    bounced off the prompt-hash cache or hit Gemini.
+
+    M19.1: the prompt includes the preceding and following sentence
     when available, so per-instance translation carries enough context
     for word-sense disambiguation. The result is cached by prompt hash
     in ``llm_cache``, so the same (word, 3-sentence window) is a free
@@ -232,14 +242,20 @@ def translate_one(
     )
     user_prompt = _build_translate_prompt(unit_text, sentence, prev_sentence, next_sentence)
     started = time.monotonic()
-    ru = _cached_llm_call(
+    ru, source = _cached_llm_call(
         TRANSLATE_SYSTEM_PROMPT,
         user_prompt,
         validator=_is_valid_translation,
     )
     latency = time.monotonic() - started
-    logger.info("translate ok: unit=%r ru=%r latency=%.2fs", unit_text, ru, latency)
-    return ru
+    logger.info(
+        "translate ok: unit=%r ru=%r source=%s latency=%.2fs",
+        unit_text,
+        ru,
+        source,
+        latency,
+    )
+    return ru, source
 
 
 def generate_training_card(
@@ -265,7 +281,7 @@ def generate_training_card(
     )
     logger.info("card request: unit=%r", unit_text)
     started = time.monotonic()
-    card = _cached_llm_call(
+    card, _source = _cached_llm_call(
         CARD_SYSTEM_PROMPT,
         user_prompt,
         validator=_is_valid_card,

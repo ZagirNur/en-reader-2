@@ -69,10 +69,12 @@ def test_cached_llm_call_hit_skips_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(translate_mod, "_call_model", fake)
     monkeypatch.setattr(translate_mod, "_get_client", lambda: None)
 
-    r1 = translate_mod.translate_one("cat", "The cat sat.")
-    r2 = translate_mod.translate_one("cat", "The cat sat.")
+    ru1, source1 = translate_mod.translate_one("cat", "The cat sat.")
+    ru2, source2 = translate_mod.translate_one("cat", "The cat sat.")
 
-    assert r1 == r2 == "кот"
+    assert ru1 == ru2 == "кот"
+    assert source1 == "llm"
+    assert source2 == "cache", "second call should hit the prompt-hash cache"
     assert len(calls) == 1, f"expected a single SDK call, got {len(calls)}"
 
 
@@ -172,7 +174,7 @@ def test_translate_endpoint_schedules_background_card(
     """
     monkeypatch.setattr(
         "en_reader.app.translate_one",
-        lambda *a, **k: "зловещий",  # noqa: ARG005
+        lambda *a, **k: ("зловещий", "llm"),  # noqa: ARG005
     )
     card_text = (
         "**Значение:** пугающий.\n"
@@ -215,7 +217,7 @@ def test_card_backfill_on_second_translation(
     """
     monkeypatch.setattr(
         "en_reader.app.translate_one",
-        lambda *a, **k: "зловещий",  # noqa: ARG005
+        lambda *a, **k: ("зловещий", "llm"),  # noqa: ARG005
     )
     call_count = {"n": 0}
 

@@ -326,6 +326,11 @@ class TranslateRequest(BaseModel):
 
 class TranslateResponse(BaseModel):
     ru: str
+    # M19.4: where the payload came from — "dict" (user already had this
+    # lemma in their dictionary), "cache" (prompt-hash hit in llm_cache,
+    # no Gemini call), "llm" (fresh Gemini call), "mock" (E2E shim). The
+    # reader renders a different toast per source on manual word clicks.
+    source: str = "llm"
 
 
 class TrainingResultIn(BaseModel):
@@ -631,7 +636,7 @@ def translate(
     existing = storage.dict_get(req.lemma, user_id=user.id)
     logger.info("translate call: lemma=%r has_prev=%s", req.lemma, bool(req.prev_sentence))
     try:
-        ru = translate_one(
+        ru, llm_source = translate_one(
             req.unit_text,
             req.sentence,
             prev_sentence=req.prev_sentence,
@@ -639,6 +644,13 @@ def translate(
         )
     except TranslateError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+    # M19.4: "dict" takes precedence — if the lemma is already in the
+    # user's dictionary, that's the user-facing story regardless of
+    # what translate_one did under the hood. Otherwise report how
+    # translate_one obtained the text: "cache" for a prompt-hash hit,
+    # "llm" for a fresh Gemini round-trip, "mock" for E2E.
+    source = "dict" if existing is not None else llm_source
 
     # First time we see this lemma for this user → add to their dictionary
     # (so it joins the SRS pool) and schedule a background card build.
@@ -674,7 +686,7 @@ def translate(
                 sentence=req.sentence,
                 ru=ru,
             )
-    return TranslateResponse(ru=ru)
+    return TranslateResponse(ru=ru, source=source)
 
 
 @app.get("/api/dictionary")

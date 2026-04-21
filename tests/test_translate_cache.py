@@ -56,11 +56,11 @@ def _payload(lemma: str = "ominous") -> dict[str, str]:
 
 
 def test_first_call_invokes_llm(client: TestClient) -> None:
-    mock = Mock(return_value="зловещий")
+    mock = Mock(return_value=("зловещий", "llm"))
     with patch("en_reader.app.translate_one", mock):
         resp = client.post("/api/translate", json=_payload())
         assert resp.status_code == 200
-        assert resp.json() == {"ru": "зловещий"}
+        assert resp.json() == {"ru": "зловещий", "source": "llm"}
         mock.assert_called_once()
 
 
@@ -71,18 +71,23 @@ def test_second_call_also_invokes_llm(client: TestClient) -> None:
     since we patch the symbol at the app level here, each call goes
     through the mock and counts as a real invocation.
     """
-    mock = Mock(return_value="зловещий")
+    mock = Mock(return_value=("зловещий", "llm"))
     with patch("en_reader.app.translate_one", mock):
         first = client.post("/api/translate", json=_payload())
         assert first.status_code == 200
+        # M19.4: first call sources from "llm" (fresh) + insert into dict.
+        assert first.json()["source"] == "llm"
         second = client.post("/api/translate", json=_payload())
         assert second.status_code == 200
-        assert second.json() == {"ru": "зловещий"}
+        # Second call re-translates through translate_one (the prompt-hash
+        # cache would short-circuit in real life), but the endpoint now
+        # labels the result "dict" because the lemma is already known.
+        assert second.json() == {"ru": "зловещий", "source": "dict"}
         assert mock.call_count == 2
 
 
 def test_delete_then_call_invokes_llm_again(client: TestClient) -> None:
-    mock = Mock(return_value="зловещий")
+    mock = Mock(return_value=("зловещий", "llm"))
     with patch("en_reader.app.translate_one", mock):
         r1 = client.post("/api/translate", json=_payload())
         assert r1.status_code == 200
@@ -103,7 +108,7 @@ def test_hit_and_miss_counters(client: TestClient) -> None:
     LLM-cache outcomes, which is still the useful signal for observing
     "how many fresh words did the user hit today".
     """
-    mock = Mock(return_value="зловещий")
+    mock = Mock(return_value=("зловещий", "llm"))
     with patch("en_reader.app.translate_one", mock):
         client.post("/api/translate", json=_payload())
         client.post("/api/translate", json=_payload())
@@ -115,7 +120,7 @@ def test_hit_and_miss_counters(client: TestClient) -> None:
 
 
 def test_miss_calls_llm_and_persists(client: TestClient) -> None:
-    mock = Mock(return_value="зловещий")
+    mock = Mock(return_value=("зловещий", "llm"))
     with patch("en_reader.app.translate_one", mock):
         resp = client.post("/api/translate", json=_payload())
         assert resp.status_code == 200
@@ -135,7 +140,7 @@ def test_different_sentence_triggers_separate_call(client: TestClient) -> None:
     practice, but the endpoint itself does not gate on lemma membership
     any more — every click is its own context-aware call.
     """
-    mock = Mock(return_value="зловещий")
+    mock = Mock(return_value=("зловещий", "llm"))
     with patch("en_reader.app.translate_one", mock):
         r1 = client.post(
             "/api/translate",

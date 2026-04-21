@@ -101,7 +101,7 @@ def test_translate_populates_only_callers_dict() -> None:
     client_a = _signup("dict-a@example.com")
     client_b = _signup("dict-b@example.com")
 
-    with patch("en_reader.app.translate_one", return_value="зловещий"):
+    with patch("en_reader.app.translate_one", return_value=("зловещий", "llm")):
         resp = client_a.post(
             "/api/translate",
             json={

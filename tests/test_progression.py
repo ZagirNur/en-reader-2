@@ -213,7 +213,7 @@ def fake_translate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub ``translate_one`` so the API test never calls Gemini."""
 
     def _fake(*_args, **_kwargs) -> str:  # noqa: ARG001
-        return "зловещий"
+        return ("зловещий", "llm")
 
     monkeypatch.setattr("en_reader.app.translate_one", _fake)
 

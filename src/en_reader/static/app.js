@@ -3109,6 +3109,9 @@ function translationKey(lemma, ctx) {
 // every distinct prompt lands in exactly one POST. The map entry is
 // evicted 30 s after resolution to keep memory bounded across long
 // reading sessions.
+// Returns ``{ ru, source }`` where source is "dict" | "cache" | "llm"
+// | "mock". Same-key concurrent callers share one HTTP round-trip via
+// ``_translationInflight``.
 async function fetchTranslationFor(span) {
   const lemma = span.dataset.lemma;
   const unitText = (span.dataset.originalText || span.textContent).trim();
@@ -3125,7 +3128,7 @@ async function fetchTranslationFor(span) {
     next_sentence: ctx.next,
     lemma,
     source_book_id: bookId,
-  }).then((r) => r.ru);
+  }).then((r) => ({ ru: r.ru, source: r.source || "llm" }));
   _translationInflight.set(key, promise);
   promise.finally(() => {
     setTimeout(() => _translationInflight.delete(key), 30_000);
@@ -3143,6 +3146,21 @@ async function onWordTap(e) {
   await translateAndReplace(span);
 }
 
+// M19.4: human-readable label for /api/translate's `source` field on
+// manual word clicks. Preload never toasts, so this is used only by
+// translateAndReplace — it answers "где мы взяли этот перевод?".
+function _translationSourceToast(source, firstForLemma) {
+  if (source === "dict") return "Из словаря";
+  if (source === "cache") {
+    return firstForLemma ? "В словарь из кэша" : "Из кэша";
+  }
+  if (source === "mock") {
+    return firstForLemma ? "В словарь (mock)" : "Mock";
+  }
+  // "llm" and any unexpected value fall through here.
+  return firstForLemma ? "В словарь из LLM" : "Из LLM";
+}
+
 async function translateAndReplace(span) {
   if (span.classList.contains("loading")) return;
   if (span.classList.contains("translated")) return;
@@ -3152,8 +3170,11 @@ async function translateAndReplace(span) {
   span.classList.add("loading");
 
   let ru;
+  let source = "llm";
   try {
-    ru = await fetchTranslationFor(span);
+    const result = await fetchTranslationFor(span);
+    ru = result.ru;
+    source = result.source;
   } catch (err) {
     span.classList.remove("loading");
     toast("Не удалось перевести");
@@ -3179,8 +3200,12 @@ async function translateAndReplace(span) {
     setTimeout(() => span.classList.remove("highlighted"), 800);
   });
 
+  // M19.4: tell the user exactly where the translation came from —
+  // "Из словаря" / "Из кэша" / "Из LLM" (with "В словарь …" prefix
+  // for the first click of each lemma). Preload path stays silent.
+  toast(_translationSourceToast(source, firstForLemma));
+
   if (firstForLemma) {
-    toast("В словарь ✓");
     // Kick off a sweep across the rest of the reader so every already-
     // rendered instance of this lemma gets its own context-specific
     // translation. Runs in the background, bounded by _PRELOAD_CONCURRENCY.
@@ -3218,7 +3243,7 @@ async function preloadPageTranslations(scopeEl) {
       if (span.classList.contains("loading")) continue;
       span.classList.add("loading");
       try {
-        const ru = await fetchTranslationFor(span);
+        const { ru } = await fetchTranslationFor(span);
         withScrollAnchor(() => {
           replaceWithTranslation(span, ru);
           const pairId = span.dataset.pairId;

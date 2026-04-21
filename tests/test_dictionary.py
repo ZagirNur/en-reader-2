@@ -31,7 +31,7 @@ def fake_translate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub out `translate_one` so `/api/translate` returns a fixed string."""
 
     def _fake(*_args, **_kwargs) -> str:  # noqa: ARG001
-        return "зловещий"
+        return ("зловещий", "llm")
 
     monkeypatch.setattr("en_reader.app.translate_one", _fake)
 
@@ -66,7 +66,7 @@ def test_translate_populates_dictionary(client: TestClient, fake_translate: None
         },
     )
     assert resp.status_code == 200
-    assert resp.json() == {"ru": "зловещий"}
+    assert resp.json() == {"ru": "зловещий", "source": "llm"}
 
     got = client.get("/api/dictionary")
     assert got.status_code == 200

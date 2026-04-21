@@ -65,7 +65,7 @@ def test_signup_upload_translate_cache_dictionary() -> None:
     assert target_unit is not None, f"no 'pick up' unit in page units={page['units']}"
 
     # 4. Translate via mocked LLM — miss path persists into the user dict.
-    mock = Mock(return_value="поднять")
+    mock = Mock(return_value=("поднять", "llm"))
     with patch("en_reader.app.translate_one", mock):
         payload = {
             "unit_text": "picked up",

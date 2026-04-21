@@ -32,7 +32,7 @@ def test_translate_rate_limit(client: TestClient) -> None:
     # deterministically returns the same stub. Using a unique lemma per
     # call avoids the dict-cache HIT path so every request exercises the
     # full handler body (and therefore the limiter check).
-    with patch("en_reader.app.translate_one", Mock(return_value="перевод")):
+    with patch("en_reader.app.translate_one", Mock(return_value=("перевод", "llm"))):
         statuses: list[int] = []
         for i in range(60):
             r = client.post(
@@ -135,7 +135,7 @@ def test_translate_rate_limit_per_user_isolation() -> None:
     )
     assert rb.status_code == 200, rb.text
 
-    with patch("en_reader.app.translate_one", Mock(return_value="перевод")):
+    with patch("en_reader.app.translate_one", Mock(return_value=("перевод", "llm"))):
         # A burns all 60 allowed hits.
         for i in range(60):
             r = client_a.post(

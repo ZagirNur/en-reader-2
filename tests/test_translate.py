@@ -57,15 +57,17 @@ def _install_fake_client(monkeypatch: pytest.MonkeyPatch, replies: Iterable[str]
 
 def test_translate_one_success(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _install_fake_client(monkeypatch, ["зловещий"])
-    out = translate_one("ominous", "She whispered an ominous warning.")
-    assert out == "зловещий"
+    ru, source = translate_one("ominous", "She whispered an ominous warning.")
+    assert ru == "зловещий"
+    assert source == "llm"
     assert fake.calls == 1
 
 
 def test_translate_one_retry_on_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _install_fake_client(monkeypatch, ["", "зловещий"])
-    out = translate_one("ominous", "She whispered an ominous warning.")
-    assert out == "зловещий"
+    ru, source = translate_one("ominous", "She whispered an ominous warning.")
+    assert ru == "зловещий"
+    assert source == "llm"
     assert fake.calls == 2
 
 
@@ -86,15 +88,15 @@ def test_translate_one_rejects_long_reply(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_translate_one_rejects_html_tags(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _install_fake_client(monkeypatch, ["<b>зловещий</b>", "зловещий"])
-    out = translate_one("ominous", "She whispered an ominous warning.")
-    assert out == "зловещий"
+    ru, _source = translate_one("ominous", "She whispered an ominous warning.")
+    assert ru == "зловещий"
     assert fake.calls == 2
 
 
 def test_translate_one_rejects_newlines(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _install_fake_client(monkeypatch, ["зловещий\n- sinister", "зловещий"])
-    out = translate_one("ominous", "She whispered an ominous warning.")
-    assert out == "зловещий"
+    ru, _source = translate_one("ominous", "She whispered an ominous warning.")
+    assert ru == "зловещий"
     assert fake.calls == 2
 
 
@@ -120,7 +122,7 @@ def test_translate_endpoint_success(client: TestClient, monkeypatch: pytest.Monk
         },
     )
     assert resp.status_code == 200
-    assert resp.json() == {"ru": "зловещий"}
+    assert resp.json() == {"ru": "зловещий", "source": "llm"}
 
 
 def test_translate_endpoint_502_on_TranslateError(

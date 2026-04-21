@@ -42,7 +42,7 @@ def test_translation_in_book_a_auto_highlights_in_book_b() -> None:
     )
     assert resp.status_code == 200, resp.text
 
-    mock = Mock(return_value="поднять")
+    mock = Mock(return_value=("поднять", "llm"))
     with patch("en_reader.app.translate_one", mock):
         # Upload book A and translate "pick up" once.
         book_a_id = _upload(
