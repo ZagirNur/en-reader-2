@@ -14,6 +14,7 @@ the signed-in user's id, eliminating cross-account data bleed.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import secrets
@@ -106,16 +107,41 @@ logger.info("en-reader starting, sha=%s", _get_git_sha())
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+def _secret_key_path() -> Path:
+    """Return the absolute path for the persisted session-cookie secret.
+
+    Anchored to the same directory as ``DB_PATH`` (default ``data/``) so
+    the key travels with the DB: a redeploy that preserves the DB file
+    also preserves every live session. The path is resolved to an
+    absolute one up-front so a later ``os.chdir`` or a differing
+    ``WorkingDirectory`` between systemd restarts can't make us silently
+    mint a fresh key in a stale cwd.
+    """
+    db = Path(os.environ.get("DB_PATH", "data/en-reader.db"))
+    return (db.parent / ".secret_key").resolve()
+
+
 def _secret_key() -> str:
     """Return a persistent SECRET_KEY, creating it on first call.
 
-    Backed by ``data/.secret_key`` with mode 0o600 — we want the key to
-    survive a restart (otherwise every deploy invalidates every live
-    session) but never to land in source control or become world-readable.
-    If the file exists we trust its contents verbatim; otherwise we mint
-    a fresh 32-byte URL-safe token.
+    Lookup order:
+
+    1. ``SESSION_SECRET_KEY`` env var (from ``/opt/en-reader/.env``) —
+       wins if set, so an operator can pin the key explicitly.
+    2. The file returned by :func:`_secret_key_path` — created on first
+       run with mode 0o600 and an absolute path so subsequent restarts
+       read back the same bytes.
+    3. A freshly minted 32-byte URL-safe token, persisted to the file
+       above so the *next* restart finds it.
+
+    Never falls back to "mint a new one every process start" silently —
+    that was the M11.2 bug where sessions evaporated on every deploy
+    whenever the file hadn't been reachable at import time.
     """
-    path = Path("data/.secret_key")
+    env_key = (os.environ.get("SESSION_SECRET_KEY") or "").strip()
+    if env_key:
+        return env_key
+    path = _secret_key_path()
     if path.exists():
         return path.read_text().strip()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,6 +152,12 @@ def _secret_key() -> str:
 
 
 SECRET_KEY = _secret_key()
+# M19.6: log a short fingerprint of the secret (NEVER the secret itself)
+# so two consecutive /debug/health or journalctl lines can confirm the
+# key survived a redeploy. A flapping id here is a smoking gun for a
+# sessions-dropping regression.
+_SECRET_KEY_ID = hashlib.sha256(SECRET_KEY.encode("utf-8")).hexdigest()[:8]
+logger.info("session secret id=%s path=%s", _SECRET_KEY_ID, _secret_key_path())
 
 
 # ---------- Telegram integration (M18.1) ----------
@@ -1507,6 +1539,10 @@ def debug_health() -> dict:
             "hit": counters.translate_hit,
             "miss": counters.translate_miss,
         },
+        # M19.6: 8-hex fingerprint of SECRET_KEY. Stable across redeploys
+        # means sessions survive; a flapping value is the smoking gun for
+        # a sessions-dropping regression.
+        "session_key_id": _SECRET_KEY_ID,
     }
 
 

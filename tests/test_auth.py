@@ -189,17 +189,20 @@ def test_session_survives_restart() -> None:
 
 
 def test_secret_key_file_persisted_0o600(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Re-run the helper in a cwd we control so the key file lands under
-    # tmp_path/data/.secret_key and we can assert its perms without
-    # touching the real project data/ dir.
+    # M19.6: the secret now lives next to the DB file (DB_PATH.parent /
+    # .secret_key), so the old tmp-cwd trick no longer applies. Point
+    # DB_PATH at a sibling file in tmp_path and confirm the helper drops
+    # the key alongside it with mode 0o600. A fresh reload of
+    # ``en_reader.app`` re-runs the module-level ``_secret_key()``.
     import importlib
 
-    monkeypatch.chdir(tmp_path)
-    # The helper creates ./data/.secret_key relative to CWD.
+    db_file = tmp_path / "en-reader.db"
+    monkeypatch.setenv("DB_PATH", str(db_file))
+    monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
     from en_reader import app as app_module
 
-    importlib.reload(app_module)  # re-runs module-level _secret_key() in tmp cwd
-    key_file = tmp_path / "data" / ".secret_key"
+    importlib.reload(app_module)
+    key_file = tmp_path / ".secret_key"
     assert key_file.exists()
     mode = stat.S_IMODE(os.stat(key_file).st_mode)
     assert mode == 0o600, f"expected 0o600, got {oct(mode)}"

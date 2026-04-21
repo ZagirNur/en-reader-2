@@ -27,22 +27,24 @@ from en_reader.ratelimit import RateLimit, rl_translate, rl_upload
 
 
 def test_translate_rate_limit(client: TestClient) -> None:
-    """60 translates pass, the 61st returns 429 with Retry-After header."""
+    """``rl_translate.max`` translates pass, the next returns 429 + Retry-After."""
     # Patch the backend so we don't depend on Gemini / network; each call
     # deterministically returns the same stub. Using a unique lemma per
     # call avoids the dict-cache HIT path so every request exercises the
-    # full handler body (and therefore the limiter check).
+    # full handler body (and therefore the limiter check). M19.5 raised
+    # the ceiling from 60 → 300/min; parameterising on ``rl_translate.max``
+    # keeps the assertion honest if we ever re-tune it.
     with patch("en_reader.app.translate_one", Mock(return_value=("перевод", "llm"))):
         statuses: list[int] = []
-        for i in range(60):
+        for i in range(rl_translate.max):
             r = client.post(
                 "/api/translate",
                 json={"unit_text": f"w{i}", "sentence": "ctx", "lemma": f"w{i}"},
             )
             statuses.append(r.status_code)
-        assert statuses == [200] * 60, statuses
+        assert statuses == [200] * rl_translate.max, statuses
 
-        # The 61st request should be rejected with a 429 + Retry-After.
+        # The next request should be rejected with a 429 + Retry-After.
         r = client.post(
             "/api/translate",
             json={"unit_text": "over", "sentence": "ctx", "lemma": "over"},
@@ -136,15 +138,15 @@ def test_translate_rate_limit_per_user_isolation() -> None:
     assert rb.status_code == 200, rb.text
 
     with patch("en_reader.app.translate_one", Mock(return_value=("перевод", "llm"))):
-        # A burns all 60 allowed hits.
-        for i in range(60):
+        # A burns every allowed hit in their bucket.
+        for i in range(rl_translate.max):
             r = client_a.post(
                 "/api/translate",
                 json={"unit_text": f"a{i}", "sentence": "ctx", "lemma": f"a{i}"},
             )
             assert r.status_code == 200, (i, r.text)
 
-        # A's 61st must now 429 — their own bucket is full.
+        # A's next hit must now 429 — their own bucket is full.
         over_a = client_a.post(
             "/api/translate",
             json={"unit_text": "aover", "sentence": "ctx", "lemma": "aover"},
