@@ -302,24 +302,74 @@ function onPopState() {
 }
 
 // --- api ---
+
+// M19.2: Telegram WebView (especially iOS Safari shell after a
+// browser-back from a pushState navigation) sometimes drops the
+// session cookie mid-session. The auto-login we ran at bootstrap()
+// can't cover that case because back-nav doesn't re-enter bootstrap.
+// This wrapper catches a 401 from any api* call, re-runs the Telegram
+// handshake once, and retries the fetch. Outside the WebView the
+// helper is a no-op (no window.Telegram.WebApp), so a real 401 just
+// bubbles up to the caller as before.
+let _tgReauthInflight = null;
+
+async function _retryViaTelegram() {
+  if (!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData)) {
+    return false;
+  }
+  if (_tgReauthInflight) return _tgReauthInflight;
+  _tgReauthInflight = (async () => {
+    try {
+      const res = await fetch("/auth/telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ init_data: window.Telegram.WebApp.initData }),
+        credentials: "include",
+      });
+      return res.ok;
+    } catch (_e) {
+      return false;
+    } finally {
+      // Release the gate after a tick so concurrent 401-retriers don't all
+      // race a second POST; a third 401 will open a new gate.
+      setTimeout(() => {
+        _tgReauthInflight = null;
+      }, 0);
+    }
+  })();
+  return _tgReauthInflight;
+}
+
+async function _fetchWithAuthRetry(path, init) {
+  const res = await fetch(path, init);
+  if (res.status !== 401) return res;
+  const reauthed = await _retryViaTelegram();
+  if (!reauthed) return res;
+  return fetch(path, init);
+}
+
 async function apiGet(path) {
-  const res = await fetch(path);
+  const res = await _fetchWithAuthRetry(path, { credentials: "include" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
 
 async function apiPost(path, body) {
-  const res = await fetch(path, {
+  const res = await _fetchWithAuthRetry(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
 
 async function apiDelete(path) {
-  const res = await fetch(path, { method: "DELETE" });
+  const res = await _fetchWithAuthRetry(path, {
+    method: "DELETE",
+    credentials: "include",
+  });
   if (!res.ok && res.status !== 204) {
     throw new Error(`${res.status} ${res.statusText}`);
   }
@@ -3775,7 +3825,10 @@ async function bootstrap() {
   let authStatus = 0;
   let networkError = false;
   try {
-    const res = await fetch("/auth/me");
+    // credentials:"include" is belt-and-suspenders for Telegram WebView
+    // where default "same-origin" has occasionally been observed to drop
+    // the session cookie on back/forward restores.
+    const res = await fetch("/auth/me", { credentials: "include" });
     authStatus = res.status;
     // M18.4: stash the email so the Settings sheet can show the user
     // which account they're logged into without a second fetch.
