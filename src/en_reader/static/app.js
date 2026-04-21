@@ -3354,6 +3354,18 @@ function revertTranslation(lemma) {
 
   delete state.userDict[lemma];
 
+  // M19.8: drop every client-side inflight entry for this lemma. The
+  // 30-s promise cache in ``_translationInflight`` would otherwise hand
+  // the next click the original ``{source:"llm"}`` response without
+  // ever talking to the server — so the user sees "В словарь из LLM"
+  // forever, even though the llm_cache on the server would have made
+  // the next call a free "из кэша" HIT. Keys are ``lemma||prev||sent||next``
+  // so we match by the first segment before the first ``||``.
+  const prefix = `${lemma}||`;
+  for (const key of Array.from(_translationInflight.keys())) {
+    if (key.startsWith(prefix)) _translationInflight.delete(key);
+  }
+
   // Fire-and-forget server sync. A network failure here must NOT block the
   // client-side revert that already happened above.
   apiDelete(`/api/dictionary/${encodeURIComponent(lemma)}`).catch((err) => {
