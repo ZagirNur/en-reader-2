@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -43,7 +43,7 @@ from en_reader.metrics import counters
 from en_reader.models import BookMeta, User
 from en_reader.parsers import UnsupportedFormatError, parse_book
 from en_reader.ratelimit import rl_translate, rl_upload
-from en_reader.translate import TranslateError, translate_one
+from en_reader.translate import TranslateError, generate_training_card, translate_one
 
 # Uvicorn ships a ``ProxyHeadersMiddleware`` that rewrites ``request.client``
 # from ``X-Forwarded-For`` / ``X-Real-IP`` when the request comes from a
@@ -317,6 +317,11 @@ class TranslateRequest(BaseModel):
     # "from: The Great Gatsby" chip). Optional — pre-M16.3 clients keep
     # working with no source attribution.
     source_book_id: int | None = None
+    # M19.1: per-instance translation sends one sentence before and after
+    # the target so the LLM can disambiguate word sense. Either may be
+    # blank at a page/book boundary; the caller still sends the field.
+    prev_sentence: str = Field(default="", max_length=2000)
+    next_sentence: str = Field(default="", max_length=2000)
 
 
 class TranslateResponse(BaseModel):
@@ -582,9 +587,30 @@ def api_book_cover(book_id: int, user: User = Depends(get_current_user)) -> File
     )
 
 
+def _background_build_card(
+    user_id: int, lemma: str, unit_text: str, sentence: str, ru: str
+) -> None:
+    """Generate and persist the training card for ``lemma``.
+
+    Runs via FastAPI :class:`BackgroundTasks` after the translate response
+    is already on the wire, so the click feels instant to the user. Any
+    failure is swallowed — a missing card is a graceful degradation and
+    the next translation of this lemma will retry via the scheduling in
+    :func:`api_translate`.
+    """
+    try:
+        card = generate_training_card(unit_text, ru, sentence)
+    except Exception:  # noqa: BLE001 — never crash the worker on card failure
+        logger.exception("card gen failed: lemma=%r", lemma)
+        return
+    storage.card_set(lemma, card, user_id=user_id)
+    logger.info("card stored: lemma=%r len=%d", lemma, len(card))
+
+
 @app.post("/api/translate", response_model=TranslateResponse)
 def translate(
     req: TranslateRequest,
+    background: BackgroundTasks,
     user: User = Depends(get_current_user),
 ) -> TranslateResponse:
     # Rate-limit before any DB / Gemini work so a spamming client can't
@@ -595,29 +621,59 @@ def translate(
             detail="slow down",
             headers={"Retry-After": str(rl_translate.window)},
         )
-    cached = storage.dict_get(req.lemma, user_id=user.id)
-    if cached:
-        counters.translate_hit += 1
-        logger.info("translate HIT: lemma=%r", req.lemma)
-        return TranslateResponse(ru=cached)
-    counters.translate_miss += 1
-    logger.info("translate MISS: lemma=%r", req.lemma)
+    # M19.1: per-instance translation — every call goes through
+    # translate_one, which itself hits the prompt-hash llm_cache. We no
+    # longer short-circuit on dict_get because the same lemma in a
+    # different sentence must yield its own context-aware translation.
+    # The counters stay for observability; "hit" now reflects the
+    # cache-layer hit reported by translate_one (approximated here as a
+    # miss, since we don't get a signal back).
+    existing = storage.dict_get(req.lemma, user_id=user.id)
+    logger.info("translate call: lemma=%r has_prev=%s", req.lemma, bool(req.prev_sentence))
     try:
-        ru = translate_one(req.unit_text, req.sentence)
+        ru = translate_one(
+            req.unit_text,
+            req.sentence,
+            prev_sentence=req.prev_sentence,
+            next_sentence=req.next_sentence,
+        )
     except TranslateError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    # M16.3: persist the originating sentence + (optional) book so the
-    # sheet UI can show "from: <book>" chips without a second lookup.
-    # ``source_book_id`` is not ownership-checked here: the FK already
-    # targets the caller's own books via the ON DELETE SET NULL constraint,
-    # and a caller spoofing someone else's id only pollutes their own row.
-    storage.dict_add(
-        req.lemma,
-        ru,
-        user_id=user.id,
-        example=req.sentence,
-        source_book_id=req.source_book_id,
-    )
+
+    # First time we see this lemma for this user → add to their dictionary
+    # (so it joins the SRS pool) and schedule a background card build.
+    # ``source_book_id`` is not ownership-checked: the FK already targets
+    # the caller's own books via ON DELETE SET NULL.
+    if existing is None:
+        counters.translate_miss += 1
+        storage.dict_add(
+            req.lemma,
+            ru,
+            user_id=user.id,
+            example=req.sentence,
+            source_book_id=req.source_book_id,
+        )
+        background.add_task(
+            _background_build_card,
+            user_id=user.id,
+            lemma=req.lemma,
+            unit_text=req.unit_text,
+            sentence=req.sentence,
+            ru=ru,
+        )
+    else:
+        counters.translate_hit += 1
+        # Card backfill: if the lemma is in the dict but was added before
+        # M19.1, or its first background attempt failed, retry now.
+        if storage.card_get(req.lemma, user_id=user.id) is None:
+            background.add_task(
+                _background_build_card,
+                user_id=user.id,
+                lemma=req.lemma,
+                unit_text=req.unit_text,
+                sentence=req.sentence,
+                ru=ru,
+            )
     return TranslateResponse(ru=ru)
 
 
@@ -935,7 +991,11 @@ def auth_telegram(p: TelegramAuthIn, request: Request) -> dict:
     init_tail = (p.init_data or "")[-12:]
     logger.info(
         "auth/telegram: ip=%s ua=%r origin=%r init_len=%d init_tail=%r",
-        ip, ua, origin, init_len, init_tail,
+        ip,
+        ua,
+        origin,
+        init_len,
+        init_tail,
     )
     if not _TELEGRAM_BOT_TOKEN:
         logger.warning("auth/telegram: 503 — TELEGRAM_BOT_TOKEN not configured")
@@ -952,7 +1012,9 @@ def auth_telegram(p: TelegramAuthIn, request: Request) -> dict:
     request.session["user_id"] = user.id
     logger.info(
         "auth/telegram: 200 — tg_id=%d user_id=%d username=%r",
-        tg_user.id, user.id, tg_user.username,
+        tg_user.id,
+        user.id,
+        tg_user.username,
     )
     return {"email": user.email, "telegram_id": tg_user.id}
 
@@ -987,12 +1049,16 @@ def _account_summary(user_id: int) -> str:
     need caching. Returns e.g. "12 слов, 3 книги".
     """
     conn = storage.get_db()
-    words = int(conn.execute(
-        "SELECT COUNT(*) AS n FROM user_dictionary WHERE user_id = ?", (user_id,)
-    ).fetchone()["n"])
-    books = int(conn.execute(
-        "SELECT COUNT(*) AS n FROM books WHERE user_id = ?", (user_id,)
-    ).fetchone()["n"])
+    words = int(
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM user_dictionary WHERE user_id = ?", (user_id,)
+        ).fetchone()["n"]
+    )
+    books = int(
+        conn.execute("SELECT COUNT(*) AS n FROM books WHERE user_id = ?", (user_id,)).fetchone()[
+            "n"
+        ]
+    )
 
     def _plural(n: int, one: str, few: str, many: str) -> str:
         if 11 <= (n % 100) <= 14:
@@ -1010,9 +1076,7 @@ def _account_summary(user_id: int) -> str:
     )
 
 
-def _handle_link_start(
-    token_str: str, from_id: int, chat_id: int
-) -> None:
+def _handle_link_start(token_str: str, from_id: int, chat_id: int) -> None:
     """Process ``/start link_<token>`` inside the webhook.
 
     Handles all four paths in one place so the webhook entrypoint stays
@@ -1069,7 +1133,8 @@ def _handle_link_start(
         storage.user_merge(dest_id=dest.id, src_id=existing.id)
         storage.link_token_update(token_str, status="done", result="merged_auto")
         tg.send_plain(
-            _TELEGRAM_BOT_TOKEN, chat_id,
+            _TELEGRAM_BOT_TOKEN,
+            chat_id,
             "Привязал и объединил данные. Возвращайся в приложение.",
         )
         return
@@ -1113,11 +1178,7 @@ def _handle_link_callback(token_str: str, keep: str, callback_query: dict) -> No
         tg.answer_callback(_TELEGRAM_BOT_TOKEN, cqid, "Ссылка просрочена")
         return
     email_user = storage.user_by_id(link.user_id)
-    tg_user = (
-        storage.user_by_id(link.other_user_id)
-        if link.other_user_id is not None
-        else None
-    )
+    tg_user = storage.user_by_id(link.other_user_id) if link.other_user_id is not None else None
     if email_user is None or tg_user is None:
         tg.answer_callback(_TELEGRAM_BOT_TOKEN, cqid, "Аккаунт пропал")
         storage.link_token_update(token_str, status="failed", result="user_gone")
@@ -1217,7 +1278,7 @@ async def tg_webhook(request: Request) -> Response:
     from_id = frm.get("id")
     if chat_id and text.startswith("/start"):
         if text.startswith("/start link_") and from_id is not None:
-            token_str = text[len("/start link_"):].strip()
+            token_str = text[len("/start link_") :].strip()
             if token_str:
                 try:
                     _handle_link_start(token_str, int(from_id), int(chat_id))
@@ -1236,9 +1297,7 @@ async def tg_webhook(request: Request) -> Response:
 
 
 @app.post("/auth/link/telegram/init")
-def auth_link_telegram_init(
-    request: Request, user: User = Depends(get_current_user)
-) -> dict:
+def auth_link_telegram_init(request: Request, user: User = Depends(get_current_user)) -> dict:
     """Mint a one-time link token and return the deep link to hand off.
 
     The frontend opens ``deep_link`` in the Telegram app (or via
@@ -1285,11 +1344,7 @@ def auth_link_telegram_status(token: str, request: Request) -> dict:
     if link is None:
         return {"status": "expired", "result": None}
     payload: dict = {"status": link.status, "result": link.result}
-    if (
-        link.status == "done"
-        and link.result == "merged_src"
-        and link.other_user_id is not None
-    ):
+    if link.status == "done" and link.result == "merged_src" and link.other_user_id is not None:
         request.session["user_id"] = link.other_user_id
         payload["session_reissued"] = True
     return payload

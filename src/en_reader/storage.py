@@ -399,6 +399,33 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
+    """M19.1: prompt-hash LLM cache + per-word training card storage.
+
+    Two orthogonal changes in one migration because both land together:
+
+    * ``llm_cache`` — a global, content-addressed cache keyed by the hash
+      of the full prompt (system + user + model). Every Gemini call goes
+      through it, so per-instance translation requests that happen to
+      share a prompt are de-duplicated across the whole app. Not
+      user-scoped: the response is a function of the prompt alone.
+    * ``user_dictionary.card_text`` / ``card_generated_at`` — the
+      AI-generated training card for each lemma. Populated asynchronously
+      after the first translation of the lemma, so the word enters the
+      SRS pool immediately while its card materialises in the background.
+    """
+    conn.execute("""
+        CREATE TABLE llm_cache (
+          prompt_hash TEXT PRIMARY KEY,
+          model TEXT NOT NULL,
+          response TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+        """)
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN card_text TEXT")
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN card_generated_at TEXT")
+
+
 def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
     """M18.4: add ``link_tokens`` — one-time tokens for the Telegram link flow.
 
@@ -413,8 +440,7 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
     ``result`` is a short human-readable string the /auth/link/telegram/
     status endpoint surfaces to the frontend poller.
     """
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE link_tokens (
           token TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -425,8 +451,7 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
           message_id INTEGER,
           result TEXT
         )
-        """
-    )
+        """)
     conn.execute("CREATE INDEX idx_link_tokens_user ON link_tokens(user_id)")
 
 
@@ -441,6 +466,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v7_to_v8,
     _migrate_v8_to_v9,
     _migrate_v9_to_v10,
+    _migrate_v10_to_v11,
 ]
 
 
@@ -543,6 +569,99 @@ def dict_all(*, user_id: int = SEED_USER_ID) -> dict[str, str]:
         (user_id,),
     )
     return {row["lemma"]: row["translation"] for row in cur.fetchall()}
+
+
+# ---------- LLM prompt cache (M19.1) ----------
+
+
+def llm_cache_get(prompt_hash: str) -> str | None:
+    """Return the cached response for ``prompt_hash``, or ``None``.
+
+    Content-addressed on the prompt only — no user scoping, because the
+    LLM's reply is a pure function of what we sent. The hash is expected
+    to fold in the model name too so a ``gemini-2.5-flash-lite`` response
+    and a ``gemini-2.5-pro`` response for the same text live in separate
+    rows.
+    """
+    conn = get_db()
+    row = conn.execute(
+        "SELECT response FROM llm_cache WHERE prompt_hash = ?",
+        (prompt_hash,),
+    ).fetchone()
+    return row["response"] if row else None
+
+
+def llm_cache_put(prompt_hash: str, model: str, response: str) -> None:
+    """Insert a cache row; on conflict keep the first write (OR IGNORE).
+
+    Two racing writers for the same prompt is a non-issue: they produce
+    identical responses in expectation, and for tiny differences the
+    first-writer-wins rule keeps the cache stable.
+    """
+    conn = get_db()
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO llm_cache(prompt_hash, model, response, created_at) "
+            "VALUES(?, ?, ?, ?)",
+            (
+                prompt_hash,
+                model,
+                response,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+# ---------- training card (M19.1) ----------
+
+
+def card_set(lemma: str, card_text: str, *, user_id: int = SEED_USER_ID) -> None:
+    """Store the AI-generated training card text for ``lemma``.
+
+    Silently no-ops if the row does not exist (e.g. the user deleted the
+    word between the background task scheduling and its completion).
+    Stamps ``card_generated_at`` so the UI can show a freshness hint and
+    so a future sweeper can regenerate stale cards.
+    """
+    conn = get_db()
+    with conn:
+        conn.execute(
+            "UPDATE user_dictionary SET card_text = ?, card_generated_at = ? "
+            "WHERE user_id = ? AND lemma = ?",
+            (
+                card_text,
+                datetime.now(timezone.utc).isoformat(),
+                user_id,
+                lemma.lower(),
+            ),
+        )
+
+
+def card_get(lemma: str, *, user_id: int = SEED_USER_ID) -> str | None:
+    """Return the stored training card text, or ``None`` if not yet generated."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT card_text FROM user_dictionary WHERE user_id = ? AND lemma = ?",
+        (user_id, lemma.lower()),
+    ).fetchone()
+    return row["card_text"] if row and row["card_text"] else None
+
+
+def dict_row(lemma: str, *, user_id: int = SEED_USER_ID) -> dict | None:
+    """Return the full dictionary row for ``lemma`` as a dict, or ``None``.
+
+    Used by the background card-generator to pull the stored example
+    sentence without a second round-trip.
+    """
+    conn = get_db()
+    row = conn.execute(
+        "SELECT lemma, translation, example, card_text, card_generated_at "
+        "FROM user_dictionary WHERE user_id = ? AND lemma = ?",
+        (user_id, lemma.lower()),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
 
 
 # ---------- word progression (M16.3) ----------
@@ -753,7 +872,7 @@ def pick_training_pool(
     # leapfrog overdue ones.
     cur = conn.execute(
         """
-        SELECT lemma, translation, status, example
+        SELECT lemma, translation, status, example, card_text
         FROM user_dictionary
         WHERE user_id = ? AND (
             (status = 'review' AND next_review_at IS NOT NULL AND next_review_at <= ?)
@@ -780,6 +899,7 @@ def pick_training_pool(
             "translation": row["translation"],
             "status": row["status"],
             "example": row["example"],
+            "card_text": row["card_text"],
         }
         for row in cur.fetchall()
     ]
@@ -1544,9 +1664,7 @@ def user_merge(dest_id: int, src_id: int) -> None:
     """
     conn = get_db()
     with conn:  # single BEGIN/COMMIT
-        conn.execute(
-            "UPDATE books SET user_id = ? WHERE user_id = ?", (dest_id, src_id)
-        )
+        conn.execute("UPDATE books SET user_id = ? WHERE user_id = ?", (dest_id, src_id))
         conn.execute(
             "DELETE FROM user_dictionary WHERE user_id = ? AND lemma IN "
             "(SELECT lemma FROM user_dictionary WHERE user_id = ?)",
@@ -1580,13 +1698,10 @@ def user_merge(dest_id: int, src_id: int) -> None:
         # Release UNIQUE on telegram_id before claiming it on dest.
         conn.execute("UPDATE users SET telegram_id = NULL WHERE id = ?", (src_id,))
         if src_tg is not None:
-            conn.execute(
-                "UPDATE users SET telegram_id = ? WHERE id = ?", (src_tg, dest_id)
-            )
+            conn.execute("UPDATE users SET telegram_id = ? WHERE id = ?", (src_tg, dest_id))
         if src_cur_book is not None:
             conn.execute(
-                "UPDATE users SET current_book_id = ? WHERE id = ? "
-                "AND current_book_id IS NULL",
+                "UPDATE users SET current_book_id = ? WHERE id = ? " "AND current_book_id IS NULL",
                 (src_cur_book, dest_id),
             )
         conn.execute("DELETE FROM users WHERE id = ?", (src_id,))

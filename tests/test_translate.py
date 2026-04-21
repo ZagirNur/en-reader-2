@@ -126,7 +126,7 @@ def test_translate_endpoint_success(client: TestClient, monkeypatch: pytest.Monk
 def test_translate_endpoint_502_on_TranslateError(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def _boom(unit_text: str, sentence: str) -> str:
+    def _boom(*_args, **_kwargs) -> str:
         raise TranslateError("forced")
 
     # Patch the symbol imported into app.py, not just the translate module.

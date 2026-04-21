@@ -1,21 +1,29 @@
-"""Tests for the dictionary-as-cache short-circuit in `/api/translate` (M6.2).
+"""Tests for the M19.1 per-instance translate endpoint contract.
 
-When a lemma is already in `user_dictionary`, the endpoint must return
-the cached translation and skip the LLM call entirely. These tests pin
-that behaviour by patching `en_reader.app.translate_one` with a mock and
-asserting its call count across sequences of POSTs and DELETEs. They
-also verify the `hit`/`miss` counters and the INFO-level log lines.
+In M6.2 the endpoint short-circuited on ``user_dictionary`` membership:
+same lemma → one LLM call, regardless of sentence. M19.1 moves the
+cache one level down — ``translate_one`` is called on every request,
+and the prompt-hash cache lives inside it (``llm_cache`` table). The
+endpoint's observable contract becomes:
 
-The `tmp_db` autouse fixture from `tests/conftest.py` gives each test a
-fresh SQLite file, and the shared ``client`` fixture signs up a fixture
-user before any `/api/translate` call (the endpoint is auth-guarded
-since M11.3). A local autouse fixture here zeros the module-level
-``counters`` so values don't leak between tests.
+* Every request funnels through ``translate_one``. Identical
+  ``(unit_text, sentence, prev, next)`` tuples still turn into one
+  real Gemini round-trip because the prompt-hash cache dedupes, but
+  the endpoint itself does not skip the call.
+* The first translation of a lemma for a user populates
+  ``user_dictionary`` and bumps ``translate_miss``; subsequent calls
+  bump ``translate_hit`` instead (used for observability).
+* Deleting the dictionary row and calling again re-enters the miss
+  path, re-populating the dictionary.
+
+These tests pin the new contract by patching
+``en_reader.app.translate_one`` directly (so the prompt-hash cache is
+bypassed and every call is counted), which lets us verify the endpoint
+side without asserting on the SDK wrapper.
 """
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import Mock, patch
 
 import pytest
@@ -44,7 +52,7 @@ def _payload(lemma: str = "ominous") -> dict[str, str]:
     }
 
 
-# ---------- cache short-circuit ----------
+# ---------- endpoint always invokes translate_one (M19.1) ----------
 
 
 def test_first_call_invokes_llm(client: TestClient) -> None:
@@ -56,7 +64,13 @@ def test_first_call_invokes_llm(client: TestClient) -> None:
         mock.assert_called_once()
 
 
-def test_second_call_skips_llm(client: TestClient) -> None:
+def test_second_call_also_invokes_llm(client: TestClient) -> None:
+    """Under M19.1 the endpoint no longer short-circuits on lemma membership.
+
+    The prompt-hash cache inside ``translate_one`` takes that role — but
+    since we patch the symbol at the app level here, each call goes
+    through the mock and counts as a real invocation.
+    """
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
         first = client.post("/api/translate", json=_payload())
@@ -64,9 +78,7 @@ def test_second_call_skips_llm(client: TestClient) -> None:
         second = client.post("/api/translate", json=_payload())
         assert second.status_code == 200
         assert second.json() == {"ru": "зловещий"}
-        # Still only one LLM invocation after the second request.
-        mock.assert_called_once()
-        assert mock.call_count == 1
+        assert mock.call_count == 2
 
 
 def test_delete_then_call_invokes_llm_again(client: TestClient) -> None:
@@ -84,7 +96,13 @@ def test_delete_then_call_invokes_llm_again(client: TestClient) -> None:
 # ---------- counters ----------
 
 
-def test_hit_increments_counter(client: TestClient) -> None:
+def test_hit_and_miss_counters(client: TestClient) -> None:
+    """First call of a lemma → miss (dict insert); subsequent → hit (dict present).
+
+    The counters now track dictionary-state transitions rather than
+    LLM-cache outcomes, which is still the useful signal for observing
+    "how many fresh words did the user hit today".
+    """
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
         client.post("/api/translate", json=_payload())
@@ -102,24 +120,44 @@ def test_miss_calls_llm_and_persists(client: TestClient) -> None:
         resp = client.post("/api/translate", json=_payload())
         assert resp.status_code == 200
         mock.assert_called_once()
-    # After the miss path, the translation must be in the fixture user's dict.
     user = storage.user_by_email(FIXTURE_EMAIL)
     assert user is not None
     assert storage.dict_get("ominous", user_id=user.id) == "зловещий"
 
 
-# ---------- logging ----------
+# ---------- per-instance: different sentence → separate LLM call ----------
 
 
-def test_logs_hit_and_miss(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+def test_different_sentence_triggers_separate_call(client: TestClient) -> None:
+    """Two translations of the same lemma in different sentences both run.
+
+    The server-side prompt-hash cache would make the second one free in
+    practice, but the endpoint itself does not gate on lemma membership
+    any more — every click is its own context-aware call.
+    """
     mock = Mock(return_value="зловещий")
     with patch("en_reader.app.translate_one", mock):
-        # M14.1 renamed the module logger to a flat "en_reader" — keep the
-        # capture scope matching the app-side logger name.
-        with caplog.at_level(logging.INFO, logger="en_reader"):
-            client.post("/api/translate", json=_payload())
-            client.post("/api/translate", json=_payload())
-
-    messages = [r.getMessage() for r in caplog.records if r.name == "en_reader"]
-    assert any("MISS" in m and "ominous" in m for m in messages)
-    assert any("HIT" in m and "ominous" in m for m in messages)
+        r1 = client.post(
+            "/api/translate",
+            json={
+                "unit_text": "ominous",
+                "sentence": "She whispered an ominous warning.",
+                "lemma": "ominous",
+                "prev_sentence": "The night was quiet.",
+                "next_sentence": "Then the door creaked.",
+            },
+        )
+        r2 = client.post(
+            "/api/translate",
+            json={
+                "unit_text": "ominous",
+                "sentence": "The ominous clouds gathered.",
+                "lemma": "ominous",
+                "prev_sentence": "",
+                "next_sentence": "",
+            },
+        )
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    # Both sentences reach translate_one — the per-instance guarantee.
+    assert mock.call_count == 2
