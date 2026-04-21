@@ -3055,9 +3055,48 @@ const _PRELOAD_CONCURRENCY = 4;
 
 function getSentenceFor(span) {
   const sentEl = span.closest("[data-sentence-id]");
-  if (sentEl) return sentEl.textContent;
+  if (sentEl) return originalSentenceText(sentEl);
   const page = span.closest(".page-body");
   return page ? page.textContent.slice(0, 300) : "";
+}
+
+// M19.7: reconstruct the ORIGINAL English sentence text from a
+// ``.sentence`` element, regardless of what is currently on-screen.
+// Preload swaps other known-lemma words in the same sentence to
+// Russian, which changes ``textContent`` — and therefore the prompt
+// hash sent to /api/translate. A click → unclick → click cycle on the
+// same word would then miss the prompt-hash cache because its
+// neighbours shifted under it.
+//
+// We cache the canonical text on the sentence's own dataset the first
+// time we ask for it so later reads don't have to walk children again
+// (and to survive in case a word's ``dataset.originalText`` got
+// cleared by a revert before the next read).
+function originalSentenceText(sentEl) {
+  if (!sentEl) return "";
+  if (sentEl.dataset.originalText) return sentEl.dataset.originalText;
+  const parts = [];
+  sentEl.childNodes.forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parts.push(node.textContent);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    // A translated word stashes its English in ``dataset.originalText``;
+    // non-translated words just expose it as their current textContent.
+    // Inline images (.inline-image) contribute no text.
+    if (node.classList && node.classList.contains("word")) {
+      const orig = node.dataset?.originalText;
+      parts.push(orig != null ? orig : node.textContent);
+    } else if (node.classList && node.classList.contains("inline-image")) {
+      // skip
+    } else {
+      parts.push(node.textContent);
+    }
+  });
+  const text = parts.join("");
+  sentEl.dataset.originalText = text;
+  return text;
 }
 
 function contextFor(span) {
@@ -3065,7 +3104,7 @@ function contextFor(span) {
   if (!sentEl) {
     return { prev: "", sentence: getSentenceFor(span), next: "" };
   }
-  const sentence = sentEl.textContent;
+  const sentence = originalSentenceText(sentEl);
   const pageBody = sentEl.closest(".page-body");
   let prev = "";
   let next = "";
@@ -3073,7 +3112,7 @@ function contextFor(span) {
     const sentences = Array.from(pageBody.querySelectorAll("[data-sentence-id]"));
     const idx = sentences.indexOf(sentEl);
     if (idx > 0) {
-      prev = sentences[idx - 1].textContent;
+      prev = originalSentenceText(sentences[idx - 1]);
     } else {
       // At the top of a page, look one page up for the last sentence so
       // the context stays continuous across a page seam. Reader layout:
@@ -3083,17 +3122,17 @@ function contextFor(span) {
       const prevPageBody = pageEl?.previousElementSibling?.querySelector?.(".page-body");
       const prevSents = prevPageBody ? prevPageBody.querySelectorAll("[data-sentence-id]") : null;
       if (prevSents && prevSents.length) {
-        prev = prevSents[prevSents.length - 1].textContent;
+        prev = originalSentenceText(prevSents[prevSents.length - 1]);
       }
     }
     if (idx >= 0 && idx < sentences.length - 1) {
-      next = sentences[idx + 1].textContent;
+      next = originalSentenceText(sentences[idx + 1]);
     } else {
       const pageEl = pageBody.closest(".page");
       const nextPageBody = pageEl?.nextElementSibling?.querySelector?.(".page-body");
       const nextSents = nextPageBody ? nextPageBody.querySelectorAll("[data-sentence-id]") : null;
       if (nextSents && nextSents.length) {
-        next = nextSents[0].textContent;
+        next = originalSentenceText(nextSents[0]);
       }
     }
   }

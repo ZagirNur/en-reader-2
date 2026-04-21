@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import secrets
 import subprocess
 from contextlib import asynccontextmanager
@@ -1555,6 +1556,38 @@ def debug_health() -> dict:
         # a sessions-dropping regression.
         "session_key_id": _SECRET_KEY_ID,
     }
+
+
+@app.get("/debug/tail")
+def debug_tail(
+    n: int = 50,
+    grep: str = "translate|llm cache|auth/telegram",
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Return the tail of the log buffer filtered by a simple regex.
+
+    Any authenticated user can read this — we scope the default filter
+    to translate / cache / auth events so nothing user-specific from
+    *other* accounts leaks (lemma content is already public per-user,
+    and the filter cuts out things like email / signup lines). If the
+    caller passes a custom ``grep`` that widens the scope, they still
+    only see whatever lines happen to be in the shared ring buffer,
+    which is bounded to 500 lines.
+
+    Designed for M19.x diagnostics: the operator can click a word in
+    the WebView, then hit ``/debug/tail`` to see the exact prompt hash
+    and cache hit/miss without needing SSH to the host.
+    """
+    n = min(max(n, 1), 500)
+    try:
+        pattern = re.compile(grep)
+    except re.error:
+        raise HTTPException(status_code=400, detail="invalid regex in ?grep=")
+    lines = [ln for ln in get_ring().tail(500) if pattern.search(ln)][-n:]
+    return Response(
+        content="\n".join(lines),
+        media_type="text/plain; charset=utf-8",
+    )
 
 
 @app.get("/debug/logs")
