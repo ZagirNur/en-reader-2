@@ -3046,11 +3046,12 @@ function renderLogin() {
 // --- inline translation (M4.2, rewritten M19.1 for per-instance context) ---
 
 // M19.1: every `.word` span gets its own translation request with ±1
-// sentence of surrounding context. Identical (lemma, prev, sent, next)
-// tuples are deduplicated client-side via `_translationInflight` so two
-// spans in the same sentence collapse into a single HTTP round-trip,
-// and the server's prompt-hash cache makes a second page render free.
-const _translationInflight = new Map();
+// sentence of surrounding context. Duplicate concurrent requests for
+// the same (lemma, context) are NOT deduped client-side — the server's
+// prompt-hash cache makes repeat hits trivial (sub-ms SQLite lookup),
+// and a client-side cache kept introducing edge-case bugs (stale entry
+// after revert, unexpected "source=llm" on re-click). The preload
+// concurrency cap of 4 already bounds the burst size.
 const _PRELOAD_CONCURRENCY = 4;
 
 function getSentenceFor(span) {
@@ -3139,40 +3140,23 @@ function contextFor(span) {
   return { prev, sentence, next };
 }
 
-function translationKey(lemma, ctx) {
-  return `${lemma}||${ctx.prev}||${ctx.sentence}||${ctx.next}`;
-}
-
-// Fetch (or reuse an in-flight) translation for a single span. The
-// response is shared between concurrent callers via the inflight map so
-// every distinct prompt lands in exactly one POST. The map entry is
-// evicted 30 s after resolution to keep memory bounded across long
-// reading sessions.
-// Returns ``{ ru, source }`` where source is "dict" | "cache" | "llm"
-// | "mock". Same-key concurrent callers share one HTTP round-trip via
-// ``_translationInflight``.
+// Direct POST to ``/api/translate``. Returns ``{ ru, source }`` where
+// ``source`` is one of ``"dict" | "cache" | "llm" | "mock"``. No
+// client-side dedup — see the comment at ``_PRELOAD_CONCURRENCY`` above.
 async function fetchTranslationFor(span) {
   const lemma = span.dataset.lemma;
   const unitText = (span.dataset.originalText || span.textContent).trim();
   const ctx = contextFor(span);
-  const key = translationKey(lemma, ctx);
-  if (_translationInflight.has(key)) {
-    return _translationInflight.get(key);
-  }
   const bookId = state.currentBook?.bookId ?? null;
-  const promise = apiPost("/api/translate", {
+  const r = await apiPost("/api/translate", {
     unit_text: unitText,
     sentence: ctx.sentence,
     prev_sentence: ctx.prev,
     next_sentence: ctx.next,
     lemma,
     source_book_id: bookId,
-  }).then((r) => ({ ru: r.ru, source: r.source || "llm" }));
-  _translationInflight.set(key, promise);
-  promise.finally(() => {
-    setTimeout(() => _translationInflight.delete(key), 30_000);
   });
-  return promise;
+  return { ru: r.ru, source: r.source || "llm" };
 }
 
 async function onWordTap(e) {
@@ -3353,18 +3337,6 @@ function revertTranslation(lemma) {
   }
 
   delete state.userDict[lemma];
-
-  // M19.8: drop every client-side inflight entry for this lemma. The
-  // 30-s promise cache in ``_translationInflight`` would otherwise hand
-  // the next click the original ``{source:"llm"}`` response without
-  // ever talking to the server — so the user sees "В словарь из LLM"
-  // forever, even though the llm_cache on the server would have made
-  // the next call a free "из кэша" HIT. Keys are ``lemma||prev||sent||next``
-  // so we match by the first segment before the first ``||``.
-  const prefix = `${lemma}||`;
-  for (const key of Array.from(_translationInflight.keys())) {
-    if (key.startsWith(prefix)) _translationInflight.delete(key);
-  }
 
   // Fire-and-forget server sync. A network failure here must NOT block the
   // client-side revert that already happened above.
