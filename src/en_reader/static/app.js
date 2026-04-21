@@ -3241,6 +3241,17 @@ async function preloadPageTranslations(scopeEl) {
     worker,
   );
   await Promise.all(workers);
+  // M19.3: preload mutates DOM after loadBelow/loadAbove did their
+  // one-shot ``_sentinelStillHot`` check. IntersectionObserver only fires
+  // on boundary *crossings*, so if the preload shifts layout such that
+  // the bottom sentinel is now in the 400 px hot zone but wasn't at
+  // insert time, pagination would silently stall. Re-drive both loaders
+  // once after the preload settles — the idempotent guards inside them
+  // make it cheap when nothing is actually due.
+  if (state.view === "reader") {
+    if (_sentinelStillHot(".sentinel-bottom")) loadBelow();
+    if (_sentinelStillHot(".sentinel-top")) loadAbove();
+  }
 }
 
 function replaceWithTranslation(span, ru) {
