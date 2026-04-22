@@ -3833,6 +3833,14 @@ function openWordSheet(span) {
   meta.textContent = "— · —";
   content.appendChild(meta);
 
+  // M20.2: primary Russian translation lives right under the
+  // headword + IPA so the learner's eye lands on it first — the
+  // dictionary card (defs, examples) lives below as secondary reading.
+  const tCard = document.createElement("div");
+  tCard.className = "sheet-card sheet-translation";
+  tCard.textContent = ruText;
+  content.appendChild(tCard);
+
   // M20.1: rich-card body. Populated asynchronously below; hidden by
   // CSS (display:none) until we have data so the sheet doesn't jump.
   const cardBody = document.createElement("div");
@@ -3845,11 +3853,6 @@ function openWordSheet(span) {
   // background task (first-translation) means the first open might
   // show the "готовится…" label for a second.
   _loadWordCard(lemma, meta, cardBody);
-
-  const tCard = document.createElement("div");
-  tCard.className = "sheet-card sheet-translation";
-  tCard.textContent = ruText;
-  content.appendChild(tCard);
 
   // "Из книги" section — sentence with the RU translation wrapped in <b>.
   const fromBook = document.createElement("div");
