@@ -46,6 +46,8 @@ class ParsedBook:
     text: str
     images: list[ParsedImage] = field(default_factory=list)
     cover: Optional[ParsedImage] = None
+    kind: str = "book"
+    source_url: Optional[str] = None
 
 
 def parse_book(data: bytes, filename: str) -> ParsedBook:

@@ -117,3 +117,5 @@ class BookMeta:
     total_pages: int
     cover_path: Optional[str]
     created_at: str
+    kind: str = "book"
+    source_url: Optional[str] = None

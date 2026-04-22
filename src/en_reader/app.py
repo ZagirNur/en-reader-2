@@ -43,7 +43,7 @@ from en_reader.auth import (
 from en_reader.logs import get_ring, install as install_logging
 from en_reader.metrics import counters
 from en_reader.models import BookMeta, User
-from en_reader.parsers import UnsupportedFormatError, parse_book
+from en_reader.parsers import ParsedBook, UnsupportedFormatError, parse_book
 from en_reader.ratelimit import rl_translate, rl_upload
 from en_reader.translate import (
     TranslateError,
@@ -688,6 +688,140 @@ def api_book_content(
         "pages": page_payloads,
         "user_dict": user_dict,
     }
+
+
+# ---------- articles API (browser-extension scoped, kind='article') ----------
+#
+# Articles are stored as regular ``books`` rows with ``kind='article'`` and
+# an optional ``source_url``. They do not appear in ``/api/books`` (which
+# filters to ``kind='book'``), but otherwise reuse the full reader pipeline —
+# NLP tokens, units, user dictionary, translate cache, SRS — so the
+# extension gets feature parity with the web SPA for free.
+#
+# Three endpoints only:
+#   POST   /api/articles/import   — create from raw text + url
+#   GET    /api/articles           — list (extension history)
+#   DELETE /api/articles/{id}      — remove from history
+#
+# Article content is served via the existing ``/api/books/{id}/content``
+# because ``_ensure_book_owner`` doesn't care about kind. The import
+# response bundles the first page of content inline so the extension can
+# render immediately without a second round-trip.
+
+
+class ArticleImportIn(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    title: str = Field(min_length=1, max_length=500)
+    text: str = Field(min_length=1, max_length=500_000)
+    author: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/articles/import")
+async def api_article_import(
+    payload: ArticleImportIn,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Ingest a chunk of article text as a hidden ``kind='article'`` book.
+
+    Reuses the TXT pipeline (no file detection): we wrap the raw text in a
+    :class:`ParsedBook` and hand it to :func:`storage.book_save`, which
+    runs the same NLP + chunker + persist path the web upload uses.
+    Response shape mirrors ``/api/books/{id}/content?offset=0&limit=ALL``
+    so the extension can render the whole article in one request.
+    """
+    if not rl_upload.check(str(user.id)):
+        raise HTTPException(
+            status_code=429,
+            detail="too many uploads today",
+            headers={"Retry-After": str(rl_upload.window)},
+        )
+
+    text = payload.text
+    encoded = text.encode("utf-8")
+
+    parsed = ParsedBook(
+        title=payload.title.strip() or "Untitled article",
+        author=payload.author,
+        language="en",
+        source_format="txt",
+        source_bytes_size=len(encoded),
+        text=text,
+        kind="article",
+        source_url=payload.url,
+    )
+
+    try:
+        article_id = storage.book_save(parsed, user_id=user.id)
+    except Exception:
+        logger.exception("article import failed for url=%r", payload.url)
+        raise HTTPException(status_code=500, detail="failed to save article")
+
+    meta = storage.book_meta(article_id, user_id=user.id)
+    if meta is None:
+        raise HTTPException(status_code=500, detail="failed to save article")
+
+    # Bundle all pages in the response — articles are generally short,
+    # and this saves a second round-trip for the common case. The
+    # per-page shape matches ``/api/books/{id}/content``.
+    pages = storage.pages_load_slice(article_id, 0, _CONTENT_MAX_LIMIT)
+    user_dict = storage.dict_all(user_id=user.id)
+    user_dict_keys = set(user_dict.keys())
+    page_payloads: list[dict] = []
+    for page in pages:
+        page_dict = asdict(page)
+        auto_ids = [
+            unit.id
+            for unit in page.units
+            if (unit.lemma or "").lower() in user_dict_keys
+        ]
+        page_dict["auto_unit_ids"] = auto_ids
+        page_payloads.append(page_dict)
+
+    logger.info(
+        "article imported: id=%d title=%r url=%r size=%d",
+        article_id, meta.title, payload.url, len(encoded),
+    )
+    return {
+        "article_id": article_id,
+        "book_id": article_id,  # alias — same thing from the backend's POV
+        "title": meta.title,
+        "source_url": meta.source_url,
+        "total_pages": meta.total_pages,
+        "pages": page_payloads,
+        "user_dict": user_dict,
+    }
+
+
+@app.get("/api/articles")
+def api_articles_list(user: User = Depends(get_current_user)) -> list[dict]:
+    """Return the extension's hidden article history for this user."""
+    metas = storage.book_list(user_id=user.id, kind="article")
+    return [
+        {
+            "id": m.id,
+            "title": m.title,
+            "author": m.author,
+            "source_url": m.source_url,
+            "total_pages": m.total_pages,
+            "created_at": m.created_at,
+        }
+        for m in metas
+    ]
+
+
+@app.delete("/api/articles/{article_id}", status_code=204)
+def api_article_delete(
+    article_id: int,
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Delete an article (404 if not owned or not actually an article)."""
+    meta = _ensure_book_owner(article_id, user.id)
+    if meta.kind != "article":
+        # A caller using the articles endpoint on a regular book id is
+        # almost certainly a bug; don't silently delete library books.
+        raise HTTPException(status_code=404, detail="article not found")
+    storage.book_delete(article_id, user_id=user.id)
+    return Response(status_code=204)
 
 
 @app.post("/api/books/{book_id}/progress", status_code=204)

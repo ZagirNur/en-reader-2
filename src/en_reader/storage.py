@@ -449,6 +449,30 @@ def _migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX idx_user_dictionary_updated ON user_dictionary(user_id, updated_at)")
 
 
+def _migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
+    """Browser-extension articles: hidden "book" rows created from web pages.
+
+    Chrome extension captures article text from any web page and POSTs
+    it to ``/api/articles/import``, which reuses the full book-ingest
+    pipeline (NLP → units → chunker → pages) but flags the resulting
+    row ``kind='article'`` so it stays out of the main library view.
+
+    Two new columns:
+    * ``kind`` — 'book' (everything pre-existing) or 'article' (hidden,
+      extension-managed). Defaults to 'book' so old rows keep their
+      semantics without a backfill.
+    * ``source_url`` — original page URL for articles; NULL for books.
+      Surfaced in the extension's history list.
+
+    The ``(user_id, kind)`` index accelerates the two common queries:
+    ``WHERE user_id=? AND kind='book'`` (library) and ``WHERE user_id=?
+    AND kind='article' ORDER BY created_at DESC`` (extension history).
+    """
+    conn.execute("ALTER TABLE books ADD COLUMN kind TEXT NOT NULL DEFAULT 'book'")
+    conn.execute("ALTER TABLE books ADD COLUMN source_url TEXT")
+    conn.execute("CREATE INDEX idx_books_user_kind ON books(user_id, kind)")
+
+
 def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
     """M20.1: structured ``user_dictionary.card_json`` for richer cards.
 
@@ -532,6 +556,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v10_to_v11,
     _migrate_v11_to_v12,
     _migrate_v12_to_v13,
+    _migrate_v13_to_v14,
 ]
 
 
@@ -1411,8 +1436,8 @@ def book_save(parsed: "ParsedBook", *, user_id: int = SEED_USER_ID) -> int:
         with conn:
             cur = conn.execute(
                 "INSERT INTO books(user_id, title, author, language, source_format, "
-                "source_bytes_size, total_pages, cover_path, created_at) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "source_bytes_size, total_pages, cover_path, created_at, kind, source_url) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     user_id,
                     parsed.title,
@@ -1423,6 +1448,8 @@ def book_save(parsed: "ParsedBook", *, user_id: int = SEED_USER_ID) -> int:
                     len(pages),
                     None,
                     created_at,
+                    parsed.kind,
+                    parsed.source_url,
                 ),
             )
             book_id = int(cur.lastrowid)
@@ -1466,6 +1493,9 @@ def book_save(parsed: "ParsedBook", *, user_id: int = SEED_USER_ID) -> int:
 
 
 def _row_to_book_meta(row: sqlite3.Row) -> BookMeta:
+    # Row.keys() is cheap and lets us stay backwards-compatible with tests
+    # that construct rows without the post-v14 columns.
+    keys = set(row.keys())
     return BookMeta(
         id=row["id"],
         title=row["title"],
@@ -1476,6 +1506,8 @@ def _row_to_book_meta(row: sqlite3.Row) -> BookMeta:
         total_pages=row["total_pages"],
         cover_path=row["cover_path"],
         created_at=row["created_at"],
+        kind=row["kind"] if "kind" in keys else "book",
+        source_url=row["source_url"] if "source_url" in keys else None,
     )
 
 
@@ -1497,13 +1529,27 @@ def book_meta(book_id: int, *, user_id: int | None = None) -> BookMeta | None:
     return _row_to_book_meta(row) if row else None
 
 
-def book_list(*, user_id: int = SEED_USER_ID) -> list[BookMeta]:
-    """Return every book, newest first (ordered by ``created_at DESC``)."""
+def book_list(
+    *, user_id: int = SEED_USER_ID, kind: str | None = "book"
+) -> list[BookMeta]:
+    """Return books for a user, newest first (ordered by ``created_at DESC``).
+
+    ``kind`` defaults to ``'book'`` so the library view never includes
+    extension-imported articles. Pass ``kind='article'`` for the
+    extension history, or ``kind=None`` to get everything.
+    """
     conn = get_db()
-    cur = conn.execute(
-        "SELECT * FROM books WHERE user_id = ? ORDER BY created_at DESC, id DESC",
-        (user_id,),
-    )
+    if kind is None:
+        cur = conn.execute(
+            "SELECT * FROM books WHERE user_id = ? ORDER BY created_at DESC, id DESC",
+            (user_id,),
+        )
+    else:
+        cur = conn.execute(
+            "SELECT * FROM books WHERE user_id = ? AND kind = ? "
+            "ORDER BY created_at DESC, id DESC",
+            (user_id, kind),
+        )
     return [_row_to_book_meta(row) for row in cur.fetchall()]
 
 
