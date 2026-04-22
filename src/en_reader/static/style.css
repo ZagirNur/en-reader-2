@@ -222,6 +222,23 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 .settings-sheet .settings-row {
   font-size: 15px; padding: 10px 0; border-bottom: 1px solid var(--line);
 }
+
+/* M20.3 — reader-mode segmented toggle. */
+.settings-sheet .settings-mode-row {
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 0;
+}
+.settings-mode-label { font-size: 13px; color: var(--ink-2); }
+.settings-mode-seg {
+  display: flex; gap: 6px; background: var(--soft);
+  padding: 4px; border-radius: 10px;
+}
+.settings-mode-btn {
+  flex: 1; appearance: none; border: 0; background: transparent;
+  font-family: inherit; font-size: 14px; padding: 8px 10px;
+  border-radius: 8px; color: var(--ink-2); cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.settings-mode-btn.is-active { background: var(--bg); color: var(--ink); font-weight: 500; }
 .settings-sheet .btn {
   width: 100%; margin-top: 20px;
   background: var(--ink); color: var(--bg);

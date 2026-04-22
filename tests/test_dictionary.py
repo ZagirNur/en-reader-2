@@ -66,7 +66,7 @@ def test_translate_populates_dictionary(client: TestClient, fake_translate: None
         },
     )
     assert resp.status_code == 200
-    assert resp.json() == {"ru": "зловещий", "source": "llm"}
+    assert resp.json() == {"ru": "зловещий", "source": "llm", "text": None, "is_simplest": False, "mode": "translate"}
 
     got = client.get("/api/dictionary")
     assert got.status_code == 200

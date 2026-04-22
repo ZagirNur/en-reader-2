@@ -122,7 +122,7 @@ def test_translate_endpoint_success(client: TestClient, monkeypatch: pytest.Monk
         },
     )
     assert resp.status_code == 200
-    assert resp.json() == {"ru": "зловещий", "source": "llm"}
+    assert resp.json() == {"ru": "зловещий", "source": "llm", "text": None, "is_simplest": False, "mode": "translate"}
 
 
 def test_translate_endpoint_502_on_TranslateError(

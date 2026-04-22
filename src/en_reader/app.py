@@ -49,6 +49,7 @@ from en_reader.translate import (
     TranslateError,
     build_rich_card,
     generate_training_card,
+    simplify_one,
     translate_one,
 )
 
@@ -360,6 +361,13 @@ class TranslateRequest(BaseModel):
     # blank at a page/book boundary; the caller still sends the field.
     prev_sentence: str = Field(default="", max_length=2000)
     next_sentence: str = Field(default="", max_length=2000)
+    # M20.3: which side of the LLM the caller wants. ``translate`` is
+    # the legacy EN→RU dictionary path (returns Russian + populates
+    # user_dictionary). ``simplify`` returns the simplest English
+    # synonym in the same grammatical form, OR a sentinel that the
+    # word is already simplest. Simplify mode does NOT touch
+    # user_dictionary or the background card builder.
+    mode: str = Field(default="translate", pattern=r"^(translate|simplify)$")
 
 
 class TranslateResponse(BaseModel):
@@ -369,6 +377,14 @@ class TranslateResponse(BaseModel):
     # no Gemini call), "llm" (fresh Gemini call), "mock" (E2E shim). The
     # reader renders a different toast per source on manual word clicks.
     source: str = "llm"
+    # M20.3: simplify-mode-only fields. ``text`` is the EN replacement
+    # word; ``is_simplest`` says the input is already the simplest form
+    # so the frontend should NOT replace the span and should just open
+    # the card directly. Both default to neutral values for the
+    # translate path so the response shape stays uniform.
+    text: str | None = None
+    is_simplest: bool = False
+    mode: str = "translate"
 
 
 class TrainingResultIn(BaseModel):
@@ -686,6 +702,31 @@ def translate(
             detail="slow down",
             headers={"Retry-After": str(rl_translate.window)},
         )
+    # M20.3: simplify mode — return the simplest English synonym in the
+    # same grammatical form, or a sentinel that the input is already
+    # simplest. Skips dict_add and the background card task entirely;
+    # those belong to the translate path's RU-vocab semantics.
+    if req.mode == "simplify":
+        try:
+            simplified, is_simplest, src = simplify_one(
+                req.unit_text,
+                req.sentence,
+                prev_sentence=req.prev_sentence,
+                next_sentence=req.next_sentence,
+            )
+        except TranslateError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        # ``ru`` carries the EN replacement so the legacy field stays
+        # populated; the frontend reads ``text`` + ``is_simplest`` for
+        # the simplify path.
+        return TranslateResponse(
+            ru=simplified or req.unit_text,
+            source=src,
+            text=simplified,
+            is_simplest=is_simplest,
+            mode="simplify",
+        )
+
     # M19.1: per-instance translation — every call goes through
     # translate_one, which itself hits the prompt-hash llm_cache. We no
     # longer short-circuit on dict_get because the same lemma in a

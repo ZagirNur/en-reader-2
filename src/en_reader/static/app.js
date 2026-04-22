@@ -23,12 +23,37 @@ const _ICONS = {
 };
 
 // --- state ---
+// M20.3: reader mode. ``translate`` (default) → click-replace word
+// with its Russian translation, populate user_dictionary, build SRS
+// card. ``simplify`` → click-replace with the simplest English
+// synonym (same grammatical form), no dict insert, no card build;
+// when the LLM says the word is already simplest, the sheet opens
+// straight away. Persisted in localStorage so the toggle survives
+// reloads.
+const _READER_MODE_KEY = "enreader.readerMode";
+function _readModeFromStorage() {
+  try {
+    const v = localStorage.getItem(_READER_MODE_KEY);
+    return v === "simplify" ? "simplify" : "translate";
+  } catch (_e) {
+    return "translate";
+  }
+}
+function _writeModeToStorage(mode) {
+  try {
+    localStorage.setItem(_READER_MODE_KEY, mode);
+  } catch (_e) {
+    /* private mode — silently no-op */
+  }
+}
+
 const state = {
   view: "loading",
   error: null,
   route: "/",
   currentBook: null,
   userDict: {},
+  readerMode: _readModeFromStorage(),
   // Library listing: undefined = not fetched, [] = fetched-and-empty, array = loaded.
   books: undefined,
   // Scroll-restore (M10.2). `targetPageIndex` and `targetOffset` are sourced
@@ -3140,10 +3165,13 @@ function contextFor(span) {
   return { prev, sentence, next };
 }
 
-// Direct POST to ``/api/translate``. Returns ``{ ru, source }`` where
-// ``source`` is one of ``"dict" | "cache" | "llm" | "mock"``. No
-// client-side dedup — see the comment at ``_PRELOAD_CONCURRENCY`` above.
-async function fetchTranslationFor(span) {
+// Direct POST to ``/api/translate``. In translate mode returns
+// ``{ ru, source }``. In simplify mode (M20.3) the response also
+// carries ``text`` (the simpler EN replacement) and ``is_simplest``
+// (true when the input is already among the simplest common English
+// words and we should NOT replace the span — just open the card).
+// No client-side dedup; the server's prompt-hash cache handles repeats.
+async function fetchTranslationFor(span, mode = state.readerMode) {
   const lemma = span.dataset.lemma;
   const unitText = (span.dataset.originalText || span.textContent).trim();
   const ctx = contextFor(span);
@@ -3155,8 +3183,15 @@ async function fetchTranslationFor(span) {
     next_sentence: ctx.next,
     lemma,
     source_book_id: bookId,
+    mode,
   });
-  return { ru: r.ru, source: r.source || "llm" };
+  return {
+    ru: r.ru,
+    source: r.source || "llm",
+    text: r.text != null ? r.text : null,
+    is_simplest: !!r.is_simplest,
+    mode: r.mode || mode,
+  };
 }
 
 async function onWordTap(e) {
@@ -3192,15 +3227,43 @@ async function translateAndReplace(span) {
 
   span.classList.add("loading");
 
-  let ru;
-  let source = "llm";
+  let result;
   try {
-    const result = await fetchTranslationFor(span);
-    ru = result.ru;
-    source = result.source;
+    result = await fetchTranslationFor(span);
   } catch (err) {
     span.classList.remove("loading");
     toast("Не удалось перевести");
+    return;
+  }
+  const ru = result.ru;
+  const source = result.source;
+
+  // M20.3: simplify mode has its own UX. When the LLM says the word is
+  // already among the simplest common forms, we don't replace anything
+  // — just open the card so the learner sees definitions/examples.
+  // When a simpler synonym IS available, we drop it into the DOM
+  // exactly like the RU translation flow, but skip every dict / SRS
+  // side-effect (those belong to translate mode).
+  if (result.mode === "simplify") {
+    span.classList.remove("loading");
+    if (result.is_simplest || !result.text) {
+      openWordSheet(span);
+      toast("Уже самая простая форма");
+      return;
+    }
+    withScrollAnchor(() => {
+      replaceWithTranslation(span, result.text);
+      if (pairId != null) {
+        const pairSel = `.word[data-pair-id="${CSS.escape(pairId)}"]`;
+        document.querySelectorAll(pairSel).forEach((w) => {
+          if (!w.classList.contains("translated"))
+            replaceWithTranslation(w, result.text);
+        });
+      }
+      span.classList.add("highlighted");
+      setTimeout(() => span.classList.remove("highlighted"), 800);
+    });
+    toast(_translationSourceToast(source, true).replace("В словарь", "Упрощено"));
     return;
   }
 
@@ -3246,6 +3309,12 @@ async function translateAndReplace(span) {
 // in-flight spans are skipped.
 async function preloadPageTranslations(scopeEl) {
   if (!scopeEl) return;
+  // M20.3: preload only makes sense in translate mode — it walks the
+  // user's RU dictionary and re-renders known words as the page loads.
+  // In simplify mode there's no equivalent persistent state and we
+  // don't want to silently swap previously-RU words for EN
+  // simplifications mid-scroll.
+  if (state.readerMode === "simplify") return;
   const lemmas = new Set(Object.keys(state.userDict));
   if (lemmas.size === 0) return;
   const tasks = [];
@@ -3460,6 +3529,39 @@ function openSettingsSheet() {
   const title = document.createElement("h2");
   title.textContent = "Настройки";
   content.appendChild(title);
+
+  // M20.3: reader-mode toggle. Two segmented buttons; the active one
+  // gets ``is-active``. Persists to localStorage via state setter so a
+  // reload remembers the choice.
+  const modeRow = document.createElement("div");
+  modeRow.className = "settings-row settings-mode-row";
+  const modeLabel = document.createElement("div");
+  modeLabel.className = "settings-mode-label";
+  modeLabel.textContent = "Режим чтения";
+  modeRow.appendChild(modeLabel);
+  const modeSeg = document.createElement("div");
+  modeSeg.className = "settings-mode-seg";
+  const _modeBtn = (id, label) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "settings-mode-btn" + (state.readerMode === id ? " is-active" : "");
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      if (state.readerMode === id) return;
+      state.readerMode = id;
+      _writeModeToStorage(id);
+      modeSeg.querySelectorAll(".settings-mode-btn").forEach((el) => {
+        el.classList.toggle("is-active", el.dataset.modeId === id);
+      });
+      toast(id === "simplify" ? "Простые синонимы EN" : "Перевод на русский");
+    });
+    b.dataset.modeId = id;
+    return b;
+  };
+  modeSeg.appendChild(_modeBtn("translate", "Перевод RU"));
+  modeSeg.appendChild(_modeBtn("simplify", "Простой EN"));
+  modeRow.appendChild(modeSeg);
+  content.appendChild(modeRow);
 
   const emailRow = document.createElement("div");
   emailRow.className = "settings-row";

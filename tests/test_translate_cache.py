@@ -60,7 +60,7 @@ def test_first_call_invokes_llm(client: TestClient) -> None:
     with patch("en_reader.app.translate_one", mock):
         resp = client.post("/api/translate", json=_payload())
         assert resp.status_code == 200
-        assert resp.json() == {"ru": "зловещий", "source": "llm"}
+        assert resp.json() == {"ru": "зловещий", "source": "llm", "text": None, "is_simplest": False, "mode": "translate"}
         mock.assert_called_once()
 
 
@@ -82,7 +82,13 @@ def test_second_call_also_invokes_llm(client: TestClient) -> None:
         # Second call re-translates through translate_one (the prompt-hash
         # cache would short-circuit in real life), but the endpoint now
         # labels the result "dict" because the lemma is already known.
-        assert second.json() == {"ru": "зловещий", "source": "dict"}
+        assert second.json() == {
+            "ru": "зловещий",
+            "source": "dict",
+            "text": None,
+            "is_simplest": False,
+            "mode": "translate",
+        }
         assert mock.call_count == 2
 
 

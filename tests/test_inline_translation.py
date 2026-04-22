@@ -111,4 +111,4 @@ def test_translate_endpoint_success_for_m4_2(
         },
     )
     assert resp.status_code == 200
-    assert resp.json() == {"ru": "зловещий", "source": "llm"}
+    assert resp.json() == {"ru": "зловещий", "source": "llm", "text": None, "is_simplest": False, "mode": "translate"}

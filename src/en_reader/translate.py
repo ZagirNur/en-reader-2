@@ -100,10 +100,33 @@ Rules:
 - If you cannot produce a valid card, return ``{"definitions_ru":[],"examples":[],"usage_note_ru":""}``."""
 
 
+SIMPLIFY_SYSTEM_PROMPT = """You are an English-language vocabulary simplifier
+for an intermediate learner. You receive ONE English word or short phrase
+and the sentence it appears in, plus optional surrounding sentences.
+
+Return the SIMPLEST common English synonym that fits the sentence — same
+part of speech, same number / tense / case, so the user can drop it into
+the sentence and the grammar still works. Preserve capitalization.
+
+Special case: if the input word is ALREADY among the most common simple
+English words for its meaning (e.g. "drop", "run", "see"), and no
+significantly simpler synonym exists, return EXACTLY the literal token
+``@SAME@`` — the caller treats that as "no simpler form, just open the
+card".
+
+Rules:
+- One word or short phrase only. No explanations, no quotes.
+- Match the inflection of the input ("ran" → "sprinted", not "sprint").
+- Plain ASCII apostrophes only ("don't"). No HTML, no Markdown.
+- Max 40 characters.
+- If you cannot decide, prefer ``@SAME@`` over a wrong answer."""
+
+
 _MAX_ATTEMPTS = 3
 _BACKOFFS = (0.5, 1.0, 2.0)
 _MAX_TRANSLATE_LEN = 60
 _MAX_CARD_LEN = 1000
+_MAX_SIMPLIFY_LEN = 40
 
 # Lazy module-level Gemini client; initialized on first call.
 _client: genai.Client | None = None
@@ -450,6 +473,79 @@ def build_rich_card(
         "usage_note_ru": (llm_card.get("usage_note_ru") or "").strip(),
         "source": "dictionary+llm" if lemma_entry is not None else "llm",
     }
+
+
+_SIMPLIFY_SAME = "@SAME@"
+
+
+def _is_valid_simplification(text: str) -> bool:
+    """Return True iff ``text`` is a usable single-token simplification.
+
+    ``@SAME@`` is the in-band sentinel meaning "input is already the
+    simplest"; we accept it as valid so the cache can store a canonical
+    "no-op" answer too.
+    """
+    if not text or not text.strip():
+        return False
+    if text.strip() == _SIMPLIFY_SAME:
+        return True
+    if "<" in text or ">" in text:
+        return False
+    if "\n" in text or "\r" in text:
+        return False
+    if len(text) > _MAX_SIMPLIFY_LEN:
+        return False
+    return True
+
+
+def simplify_one(
+    unit_text: str,
+    sentence: str,
+    prev_sentence: str = "",
+    next_sentence: str = "",
+) -> tuple[str | None, bool, str]:
+    """Find the simplest English synonym for ``unit_text`` in context.
+
+    Returns ``(simplified_text_or_None, is_simplest, source)``:
+
+    * ``is_simplest=True`` ⇒ the input is already among the simplest
+      common English words for its meaning; ``simplified_text_or_None``
+      is ``None`` and the caller should NOT replace the span — just
+      open the card. The sentinel is also persisted in ``llm_cache``
+      so a repeat lookup is free.
+    * ``is_simplest=False`` ⇒ ``simplified_text_or_None`` is the
+      single-token simpler synonym, in the same grammatical form as
+      the input. Caller drops it into the DOM in place of the original.
+
+    ``source`` is one of ``"cache" | "llm" | "mock"`` — same semantics
+    as :func:`translate_one`.
+    """
+    logger.info(
+        "simplify request: unit=%r sentence=%r prev=%r next=%r",
+        unit_text,
+        sentence[:80],
+        prev_sentence[:80] if prev_sentence else "",
+        next_sentence[:80] if next_sentence else "",
+    )
+    user_prompt = _build_translate_prompt(unit_text, sentence, prev_sentence, next_sentence)
+    started = time.monotonic()
+    text, source = _cached_llm_call(
+        SIMPLIFY_SYSTEM_PROMPT,
+        user_prompt,
+        validator=_is_valid_simplification,
+    )
+    latency = time.monotonic() - started
+    text = text.strip()
+    is_simplest = text == _SIMPLIFY_SAME
+    logger.info(
+        "simplify ok: unit=%r out=%r is_simplest=%s source=%s latency=%.2fs",
+        unit_text,
+        text,
+        is_simplest,
+        source,
+        latency,
+    )
+    return (None if is_simplest else text), is_simplest, source
 
 
 def generate_training_card(

@@ -110,7 +110,7 @@ def test_origin_check_post_matching_origin_passes(
         headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"ru": "ок", "source": "llm"}
+    assert r.json() == {"ru": "ок", "source": "llm", "text": None, "is_simplest": False, "mode": "translate"}
 
 
 def test_origin_check_absent_origin_passes(
