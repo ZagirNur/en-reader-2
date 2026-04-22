@@ -3635,6 +3635,181 @@ function showTabBar() {
   document.body.classList.add("with-tabbar");
 }
 
+// --- M20.1: rich word-card renderer ---
+//
+// The backend builds ``card_json`` in the background after the first
+// /api/translate on a lemma. Shape (see build_rich_card on the server):
+//   { word, ipa, audio_url, meanings[{pos, definitions[], definitions_ru[],
+//     examples[]}], synonyms[], translation, examples_ru[{en, ru}],
+//     usage_note_ru, source }
+// ``_renderCard`` patches the sheet's meta + body in place; the meta
+// line shows ``/ipa/ · pos`` and the body shows definitions grouped by
+// POS, example sentences with EN+RU, synonyms, and the usage note.
+//
+// We cache the parsed card in memory for the lifetime of the page so
+// reopening the same sheet doesn't re-fetch.
+const _wordCardCache = new Map();
+
+async function _loadWordCard(lemma, metaEl, bodyEl) {
+  const cached = _wordCardCache.get(lemma);
+  if (cached) {
+    _renderCard(cached, metaEl, bodyEl);
+    return;
+  }
+  // Show a subtle placeholder while the request is in flight; the
+  // background task can take a couple of seconds on a brand-new word.
+  metaEl.textContent = "готовится…";
+  try {
+    const r = await apiGet(`/api/dictionary/${encodeURIComponent(lemma)}/card`);
+    if (r && r.ready && r.card) {
+      _wordCardCache.set(lemma, r.card);
+      _renderCard(r.card, metaEl, bodyEl);
+    } else {
+      // Not ready yet — poll once more after a short delay.
+      setTimeout(async () => {
+        try {
+          const r2 = await apiGet(
+            `/api/dictionary/${encodeURIComponent(lemma)}/card`,
+          );
+          if (r2 && r2.ready && r2.card) {
+            _wordCardCache.set(lemma, r2.card);
+            _renderCard(r2.card, metaEl, bodyEl);
+          } else {
+            metaEl.textContent = "— · —";
+          }
+        } catch (_e) {
+          metaEl.textContent = "— · —";
+        }
+      }, 2500);
+    }
+  } catch (_err) {
+    metaEl.textContent = "— · —";
+  }
+}
+
+function _renderCard(card, metaEl, bodyEl) {
+  // Meta line: "/ipa/ · noun, verb" when we have both; falls back to
+  // whatever piece is present. em-dashes when nothing is.
+  const ipa = (card.ipa || "").trim();
+  const posList = (card.meanings || [])
+    .map((m) => (m.pos || "").trim())
+    .filter(Boolean);
+  const posText = Array.from(new Set(posList)).join(", ");
+  const metaBits = [];
+  if (ipa) metaBits.push(ipa);
+  if (posText) metaBits.push(posText);
+  metaEl.textContent = metaBits.length ? metaBits.join(" · ") : "— · —";
+
+  // Body: definitions, examples, synonyms, usage note.
+  bodyEl.innerHTML = "";
+  bodyEl.style.display = "";
+
+  const meanings = Array.isArray(card.meanings) ? card.meanings : [];
+  if (meanings.length) {
+    const defsWrap = document.createElement("div");
+    defsWrap.className = "sheet-card-defs";
+    const up = document.createElement("div");
+    up.className = "uplabel";
+    up.textContent = "Значения";
+    defsWrap.appendChild(up);
+    meanings.forEach((m) => {
+      const pos = (m.pos || "").trim();
+      const defs = Array.isArray(m.definitions) ? m.definitions : [];
+      const defsRu = Array.isArray(m.definitions_ru) ? m.definitions_ru : [];
+      if (!defs.length) return;
+      const posRow = document.createElement("div");
+      posRow.className = "sheet-card-pos";
+      if (pos) {
+        const badge = document.createElement("span");
+        badge.className = "sheet-card-pos-badge";
+        badge.textContent = pos;
+        posRow.appendChild(badge);
+      }
+      const ol = document.createElement("ol");
+      ol.className = "sheet-card-def-list";
+      defs.forEach((d, i) => {
+        const li = document.createElement("li");
+        const en = document.createElement("div");
+        en.className = "sheet-card-def-en";
+        en.textContent = d;
+        li.appendChild(en);
+        const ruText = defsRu[i] || "";
+        if (ruText) {
+          const ru = document.createElement("div");
+          ru.className = "sheet-card-def-ru";
+          ru.textContent = ruText;
+          li.appendChild(ru);
+        }
+        ol.appendChild(li);
+      });
+      posRow.appendChild(ol);
+      defsWrap.appendChild(posRow);
+    });
+    bodyEl.appendChild(defsWrap);
+  }
+
+  const examples = Array.isArray(card.examples_ru) ? card.examples_ru : [];
+  if (examples.length) {
+    const exWrap = document.createElement("div");
+    exWrap.className = "sheet-card-examples";
+    const up = document.createElement("div");
+    up.className = "uplabel";
+    up.textContent = "Примеры";
+    exWrap.appendChild(up);
+    examples.forEach((ex) => {
+      if (!ex || !ex.en) return;
+      const item = document.createElement("div");
+      item.className = "sheet-card-example";
+      const en = document.createElement("div");
+      en.className = "sheet-card-example-en";
+      en.textContent = ex.en;
+      item.appendChild(en);
+      if (ex.ru) {
+        const ru = document.createElement("div");
+        ru.className = "sheet-card-example-ru";
+        ru.textContent = ex.ru;
+        item.appendChild(ru);
+      }
+      exWrap.appendChild(item);
+    });
+    bodyEl.appendChild(exWrap);
+  }
+
+  const synonyms = Array.isArray(card.synonyms) ? card.synonyms : [];
+  if (synonyms.length) {
+    const synWrap = document.createElement("div");
+    synWrap.className = "sheet-card-synonyms";
+    const up = document.createElement("div");
+    up.className = "uplabel";
+    up.textContent = "Синонимы";
+    synWrap.appendChild(up);
+    const chips = document.createElement("div");
+    chips.className = "sheet-card-chips";
+    synonyms.forEach((s) => {
+      const chip = document.createElement("span");
+      chip.className = "sheet-card-chip";
+      chip.textContent = s;
+      chips.appendChild(chip);
+    });
+    synWrap.appendChild(chips);
+    bodyEl.appendChild(synWrap);
+  }
+
+  const note = (card.usage_note_ru || "").trim();
+  if (note) {
+    const noteWrap = document.createElement("div");
+    noteWrap.className = "sheet-card-note";
+    const up = document.createElement("div");
+    up.className = "uplabel";
+    up.textContent = "Запомни";
+    noteWrap.appendChild(up);
+    const p = document.createElement("p");
+    p.textContent = note;
+    noteWrap.appendChild(p);
+    bodyEl.appendChild(noteWrap);
+  }
+}
+
 // --- M4.2 word-sheet, now driven by the canonical openSheet shell. ---
 function openWordSheet(span) {
   const lemma = span.dataset.lemma;
@@ -3650,10 +3825,26 @@ function openWordSheet(span) {
   headword.textContent = original;
   content.appendChild(headword);
 
+  // M20.1: meta line carries IPA + dominant POS once the rich card
+  // lands from the background task. Starts as a tasteful em-dash while
+  // we wait on the fetch.
   const meta = document.createElement("div");
   meta.className = "sheet-meta";
   meta.textContent = "— · —";
   content.appendChild(meta);
+
+  // M20.1: rich-card body. Populated asynchronously below; hidden by
+  // CSS (display:none) until we have data so the sheet doesn't jump.
+  const cardBody = document.createElement("div");
+  cardBody.className = "sheet-card-body";
+  cardBody.style.display = "none";
+  content.appendChild(cardBody);
+
+  // Kick off the card fetch right after building the static parts.
+  // ``_loadWordCard`` patches meta + cardBody in place. A long-running
+  // background task (first-translation) means the first open might
+  // show the "готовится…" label for a second.
+  _loadWordCard(lemma, meta, cardBody);
 
   const tCard = document.createElement("div");
   tCard.className = "sheet-card sheet-translation";

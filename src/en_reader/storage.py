@@ -399,6 +399,19 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
+    """M20.1: structured ``user_dictionary.card_json`` for richer cards.
+
+    ``card_text`` stayed as free-form Markdown through M19; M20 moves the
+    training card to a structured JSON shape (IPA, POS, per-POS
+    definitions with EN+RU, examples with EN+RU, synonyms, a usage
+    note). Keeping both columns lets pre-M20 cards still render via
+    ``card_text`` while new builds populate ``card_json``. Nullable with
+    no default — rows that haven't been built yet simply have NULL.
+    """
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN card_json TEXT")
+
+
 def _migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
     """M19.1: prompt-hash LLM cache + per-word training card storage.
 
@@ -467,6 +480,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v8_to_v9,
     _migrate_v9_to_v10,
     _migrate_v10_to_v11,
+    _migrate_v11_to_v12,
 ]
 
 
@@ -628,25 +642,39 @@ def llm_cache_put(prompt_hash: str, model: str, response: str) -> None:
 # ---------- training card (M19.1) ----------
 
 
-def card_set(lemma: str, card_text: str, *, user_id: int = SEED_USER_ID) -> None:
-    """Store the AI-generated training card text for ``lemma``.
+def card_set(
+    lemma: str,
+    card_text: str | None,
+    *,
+    card_json: str | None = None,
+    user_id: int = SEED_USER_ID,
+) -> None:
+    """Store the AI-generated training card content for ``lemma``.
 
-    Silently no-ops if the row does not exist (e.g. the user deleted the
-    word between the background task scheduling and its completion).
-    Stamps ``card_generated_at`` so the UI can show a freshness hint and
-    so a future sweeper can regenerate stale cards.
+    ``card_text`` is the legacy Markdown shape (kept for backcompat);
+    ``card_json`` is the M20.1 structured JSON (IPA, definitions,
+    examples, synonyms). Callers may set either or both — whichever is
+    ``None`` stays untouched on the existing row. Silently no-ops if
+    the row does not exist (e.g. the user deleted the word between
+    the background task scheduling and its completion). Stamps
+    ``card_generated_at`` on every write so the UI can show a
+    freshness hint.
     """
     conn = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    sets: list[str] = ["card_generated_at = ?"]
+    params: list[Any] = [now]
+    if card_text is not None:
+        sets.append("card_text = ?")
+        params.append(card_text)
+    if card_json is not None:
+        sets.append("card_json = ?")
+        params.append(card_json)
+    params.extend([user_id, lemma.lower()])
     with conn:
         conn.execute(
-            "UPDATE user_dictionary SET card_text = ?, card_generated_at = ? "
-            "WHERE user_id = ? AND lemma = ?",
-            (
-                card_text,
-                datetime.now(timezone.utc).isoformat(),
-                user_id,
-                lemma.lower(),
-            ),
+            f"UPDATE user_dictionary SET {', '.join(sets)} " "WHERE user_id = ? AND lemma = ?",
+            params,
         )
 
 
@@ -658,6 +686,16 @@ def card_get(lemma: str, *, user_id: int = SEED_USER_ID) -> str | None:
         (user_id, lemma.lower()),
     ).fetchone()
     return row["card_text"] if row and row["card_text"] else None
+
+
+def card_json_get(lemma: str, *, user_id: int = SEED_USER_ID) -> str | None:
+    """Return the stored card JSON blob, or ``None`` if not yet generated."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT card_json FROM user_dictionary WHERE user_id = ? AND lemma = ?",
+        (user_id, lemma.lower()),
+    ).fetchone()
+    return row["card_json"] if row and row["card_json"] else None
 
 
 def dict_row(lemma: str, *, user_id: int = SEED_USER_ID) -> dict | None:
@@ -885,7 +923,7 @@ def pick_training_pool(
     # leapfrog overdue ones.
     cur = conn.execute(
         """
-        SELECT lemma, translation, status, example, card_text
+        SELECT lemma, translation, status, example, card_text, card_json
         FROM user_dictionary
         WHERE user_id = ? AND (
             (status = 'review' AND next_review_at IS NOT NULL AND next_review_at <= ?)
@@ -913,6 +951,7 @@ def pick_training_pool(
             "status": row["status"],
             "example": row["example"],
             "card_text": row["card_text"],
+            "card_json": row["card_json"],
         }
         for row in cur.fetchall()
     ]

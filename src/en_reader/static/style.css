@@ -175,6 +175,48 @@ button { cursor: pointer; font: inherit; padding: 0.5rem 1rem; }
 .sheet-from-book-text { font-size: 13px; line-height: 1.5; color: var(--ink); }
 .sheet-actions { display: flex; gap: 10px; margin-top: 20px; }
 
+/* M20.1 — rich card body. Renders under the headword+meta, above
+   "Из книги". Each section has an uplabel + its own block of content;
+   the visual weight is intentionally lighter than sheet-translation
+   so the learner's eye still lands on the RU word first. */
+.sheet-card-body { display: flex; flex-direction: column; gap: 18px; margin-bottom: 16px; }
+.sheet-card-body .uplabel { margin-bottom: 8px; }
+.sheet-card-defs { display: flex; flex-direction: column; gap: 12px; }
+.sheet-card-pos { display: flex; flex-direction: column; gap: 6px; }
+.sheet-card-pos-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  background: var(--soft);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.sheet-card-def-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.sheet-card-def-en { font-size: 14px; line-height: 1.45; color: var(--ink); }
+.sheet-card-def-ru { font-size: 13px; line-height: 1.45; color: var(--ink-2); font-style: italic; margin-top: 2px; }
+.sheet-card-examples { display: flex; flex-direction: column; gap: 10px; }
+.sheet-card-example {
+  background: var(--soft);
+  padding: 10px 12px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sheet-card-example-en { font-size: 14px; line-height: 1.45; color: var(--ink); }
+.sheet-card-example-ru { font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+.sheet-card-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sheet-card-chip {
+  font-size: 12px;
+  background: var(--soft);
+  color: var(--ink-2);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.sheet-card-note p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink); }
+
 /* --- M18.4: settings sheet (Telegram link flow). ----------------------- */
 .settings-sheet h2 { margin: 0 0 16px; font-size: 22px; font-weight: 600; }
 .settings-sheet .settings-row {

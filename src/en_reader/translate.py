@@ -20,14 +20,17 @@ structured logging stay here so the API handlers remain boring.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import re
 import time
+from dataclasses import asdict
 from typing import Any
 
 from google import genai
 
-from . import storage
+from . import dictionary, storage
 from .metrics import counters
 
 logger = logging.getLogger(__name__)
@@ -59,6 +62,42 @@ Return a Markdown card with EXACTLY these four sections, no preamble, no trailin
 **Запомни:** one short mnemonic or usage hint in Russian (max 100 chars).
 
 Keep the whole card under 600 characters. No HTML, no links, no headings above level-2."""
+
+
+# M20.1 — the structured card (``card_json``). Feeds the per-POS
+# definitions + example translations to Gemini, and asks for one extra
+# example "in a different situation" so the learner sees the word used
+# in more than one register. The model is told to return bare JSON; we
+# parse with a small rescue wrapper so a leading/trailing ``
+RICH_CARD_SYSTEM_PROMPT = """You are building a structured flash-card for a
+Russian-speaking learner of English.
+
+You receive:
+- the English headword (or phrase)
+- its short Russian translation
+- the sentence the learner first met it in
+- optionally, a list of English definitions the user already has from a dictionary
+- optionally, a list of English example sentences the user already has
+
+Return ONLY a JSON object with this exact shape (no Markdown code fences, no prose):
+
+{
+  "definitions_ru": ["Russian translations of the provided definitions, same order, max 140 chars each"],
+  "examples": [
+    {"en": "English example sentence in a specific context", "ru": "russian translation of the example"},
+    ...
+  ],
+  "usage_note_ru": "one short Russian sentence describing a nuance or common pitfall (max 180 chars)"
+}
+
+Rules:
+- ``definitions_ru`` mirrors whatever list of definitions you got, in the same
+  order. If you were given zero definitions, return an empty array.
+- ``examples`` MUST contain at least three items that together show the word in
+  DIFFERENT situations (formal / casual / literal / idiomatic as applicable).
+  Reuse the provided user examples if any, translate them, and invent more.
+- Keep every string short. No HTML, no Markdown, no quotes around the JSON.
+- If you cannot produce a valid card, return ``{"definitions_ru":[],"examples":[],"usage_note_ru":""}``."""
 
 
 _MAX_ATTEMPTS = 3
@@ -259,6 +298,158 @@ def translate_one(
         latency,
     )
     return ru, source
+
+
+def _is_valid_json_card(text: str) -> bool:
+    """Return True if ``text`` parses as a JSON object with the expected keys."""
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(obj, dict):
+        return False
+    if "examples" not in obj:
+        return False
+    return True
+
+
+def _strip_json_fences(text: str) -> str:
+    """Tolerate a model that wraps its JSON in a ``` fence.
+
+    We ask Gemini for bare JSON and the prompt is clear about it, but
+    the model occasionally adds a ``` fence anyway. Peeling the fences
+    here is cheaper than re-prompting.
+    """
+    t = text.strip()
+    if t.startswith("```"):
+        # Drop the opening fence + optional language tag line.
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        if t.endswith("```"):
+            t = t[:-3]
+    return t.strip()
+
+
+def build_rich_card(
+    unit_text: str,
+    ru_translation: str,
+    context_sentence: str,
+) -> dict:
+    """Build the M20.1 structured card: dictionary + Gemini translation layer.
+
+    Flow:
+
+    1. Look up ``unit_text`` in :func:`dictionary.fetch_entry` (open
+       dictionaryapi.dev, cached in ``llm_cache``). When we get a hit we
+       know the IPA, POS, canonical English definitions and a handful of
+       example sentences.
+    2. Ask Gemini for the Russian-language layer: translations of the
+       definitions (in order), additional / translated example sentences
+       (at least three, covering different situations), and a short
+       usage note.  The prompt includes the dictionary data as context
+       so the model's examples match the register.
+    3. Merge both layers into a single JSON-serialisable dict.
+
+    If the word isn't in the open dictionary (phrasal verb etc.) we
+    still call Gemini with empty definition/example lists — it produces
+    a card from scratch. The shape returned is identical to the
+    dictionary-backed path, so the frontend has one render code-path.
+    """
+    lemma_entry = dictionary.fetch_entry(unit_text)
+    if lemma_entry is None:
+        # Try the stem without trailing -ed / -ing / -s so "drops" still
+        # lands on "drop"'s dictionary entry.
+        stem = re.sub(r"(s|es|ed|ing)$", "", unit_text.strip().lower())
+        if stem and stem != unit_text.strip().lower():
+            lemma_entry = dictionary.fetch_entry(stem)
+
+    dict_payload = (
+        {
+            "word": lemma_entry.word,
+            "ipa": lemma_entry.ipa,
+            "audio_url": lemma_entry.audio_url,
+            "meanings": [asdict(m) for m in lemma_entry.meanings],
+            "synonyms": lemma_entry.synonyms,
+        }
+        if lemma_entry is not None
+        else {
+            "word": unit_text.strip().lower(),
+            "ipa": "",
+            "audio_url": "",
+            "meanings": [],
+            "synonyms": [],
+        }
+    )
+
+    # Flatten the dict definitions + examples into the LLM prompt so the
+    # model's output can align ``definitions_ru`` with the same order.
+    flat_definitions = [d for m in dict_payload["meanings"] for d in m["definitions"]]
+    flat_examples = [e for m in dict_payload["meanings"] for e in m["examples"]]
+
+    user_prompt = (
+        f"Word: {unit_text}\n"
+        f"Russian translation: {ru_translation}\n"
+        f"Context sentence: {context_sentence}\n"
+        f"English definitions: {json.dumps(flat_definitions, ensure_ascii=False)}\n"
+        f"Dictionary examples: {json.dumps(flat_examples, ensure_ascii=False)}"
+    )
+    logger.info("rich-card request: unit=%r has_dict=%s", unit_text, lemma_entry is not None)
+    started = time.monotonic()
+    try:
+        raw, _source = _cached_llm_call(
+            RICH_CARD_SYSTEM_PROMPT,
+            user_prompt,
+            validator=lambda t: _is_valid_json_card(_strip_json_fences(t)),
+        )
+    except TranslateError:
+        # A total failure still produces a renderable card — just with
+        # no Russian translations. Better than an empty ``card_json``.
+        logger.warning("rich-card LLM failed for %r — returning dict-only payload", unit_text)
+        return {
+            "word": dict_payload["word"],
+            "ipa": dict_payload["ipa"],
+            "audio_url": dict_payload["audio_url"],
+            "meanings": dict_payload["meanings"],
+            "synonyms": dict_payload["synonyms"],
+            "translation": ru_translation,
+            "examples_ru": [],
+            "usage_note_ru": "",
+            "source": "dictionary-only" if lemma_entry else "none",
+        }
+    llm_card = json.loads(_strip_json_fences(raw))
+    latency = time.monotonic() - started
+    logger.info(
+        "rich-card ok: unit=%r defs=%d examples=%d latency=%.2fs",
+        unit_text,
+        len(llm_card.get("definitions_ru", []) or []),
+        len(llm_card.get("examples", []) or []),
+        latency,
+    )
+
+    # Splice the LLM's Russian definitions back into the per-POS
+    # meaning blocks, matching by position.
+    defs_ru = list(llm_card.get("definitions_ru") or [])
+    idx = 0
+    for m in dict_payload["meanings"]:
+        m["definitions_ru"] = []
+        for _ in m["definitions"]:
+            m["definitions_ru"].append(defs_ru[idx] if idx < len(defs_ru) else "")
+            idx += 1
+
+    return {
+        "word": dict_payload["word"],
+        "ipa": dict_payload["ipa"],
+        "audio_url": dict_payload["audio_url"],
+        "meanings": dict_payload["meanings"],
+        "synonyms": dict_payload["synonyms"],
+        "translation": ru_translation,
+        "examples_ru": [
+            {"en": ex.get("en", ""), "ru": ex.get("ru", "")}
+            for ex in (llm_card.get("examples") or [])
+            if isinstance(ex, dict) and ex.get("en")
+        ],
+        "usage_note_ru": (llm_card.get("usage_note_ru") or "").strip(),
+        "source": "dictionary+llm" if lemma_entry is not None else "llm",
+    }
 
 
 def generate_training_card(

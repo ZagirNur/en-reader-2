@@ -45,7 +45,12 @@ from en_reader.metrics import counters
 from en_reader.models import BookMeta, User
 from en_reader.parsers import UnsupportedFormatError, parse_book
 from en_reader.ratelimit import rl_translate, rl_upload
-from en_reader.translate import TranslateError, generate_training_card, translate_one
+from en_reader.translate import (
+    TranslateError,
+    build_rich_card,
+    generate_training_card,
+    translate_one,
+)
 
 # Uvicorn ships a ``ProxyHeadersMiddleware`` that rewrites ``request.client``
 # from ``X-Forwarded-For`` / ``X-Real-IP`` when the request comes from a
@@ -630,19 +635,41 @@ def _background_build_card(
 ) -> None:
     """Generate and persist the training card for ``lemma``.
 
-    Runs via FastAPI :class:`BackgroundTasks` after the translate response
-    is already on the wire, so the click feels instant to the user. Any
-    failure is swallowed — a missing card is a graceful degradation and
-    the next translation of this lemma will retry via the scheduling in
-    :func:`api_translate`.
+    M20.1: the primary card is now the structured JSON shape built by
+    :func:`build_rich_card` (open dictionary + Gemini Russian layer).
+    We also still fill ``card_text`` with the legacy Markdown flavour
+    so older clients have something to render; both land under the
+    same ``card_generated_at`` stamp via :func:`storage.card_set`.
+
+    Runs via FastAPI :class:`BackgroundTasks` after the translate
+    response is already on the wire, so the click feels instant to
+    the user. Any failure is swallowed — a missing card is a graceful
+    degradation and the next translation of this lemma retries.
     """
+    import json as _json
+
+    card_json: str | None = None
     try:
-        card = generate_training_card(unit_text, ru, sentence)
-    except Exception:  # noqa: BLE001 — never crash the worker on card failure
-        logger.exception("card gen failed: lemma=%r", lemma)
+        rich = build_rich_card(unit_text, ru, sentence)
+        card_json = _json.dumps(rich, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        logger.exception("rich-card gen failed: lemma=%r", lemma)
+
+    card_text: str | None = None
+    try:
+        card_text = generate_training_card(unit_text, ru, sentence)
+    except Exception:  # noqa: BLE001
+        logger.exception("markdown-card gen failed: lemma=%r", lemma)
+
+    if card_text is None and card_json is None:
         return
-    storage.card_set(lemma, card, user_id=user_id)
-    logger.info("card stored: lemma=%r len=%d", lemma, len(card))
+    storage.card_set(lemma, card_text, card_json=card_json, user_id=user_id)
+    logger.info(
+        "card stored: lemma=%r md_len=%d json_len=%d",
+        lemma,
+        len(card_text or ""),
+        len(card_json or ""),
+    )
 
 
 @app.post("/api/translate", response_model=TranslateResponse)
@@ -783,6 +810,34 @@ def api_dictionary_training_result(
     """
     storage.record_training_result(p.lemma, p.correct, user_id=user.id)
     return Response(status_code=204)
+
+
+@app.get("/api/dictionary/{lemma}/card")
+def api_dictionary_card(
+    lemma: str,
+    user: User = Depends(get_current_user),
+) -> Response:
+    """M20.1: return the structured training card for ``lemma`` as JSON.
+
+    ``card_json`` is populated by the background task kicked off on the
+    first translation — so a fresh click on a word returns an empty
+    payload here for a second or two until the card lands. The
+    frontend polls or shows a "Карточка готовится…" placeholder rather
+    than blocking. Also 404s on a lemma the user doesn't own so a
+    curious client can't enumerate other users' vocab lists.
+    """
+    import json as _json
+
+    if storage.dict_get(lemma, user_id=user.id) is None:
+        raise HTTPException(status_code=404)
+    raw = storage.card_json_get(lemma, user_id=user.id)
+    if not raw:
+        return JSONResponse({"ready": False, "card": None})
+    try:
+        card = _json.loads(raw)
+    except _json.JSONDecodeError:
+        card = None
+    return JSONResponse({"ready": card is not None, "card": card})
 
 
 @app.delete("/api/dictionary/{lemma}")
