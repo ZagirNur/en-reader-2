@@ -1,0 +1,1943 @@
+{
+  "components": {
+    "schemas": {
+      "Body_api_book_upload_api_books_upload_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_api_book_upload_api_books_upload_post",
+        "type": "object"
+      },
+      "BookListItem": {
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "cover_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Preset"
+          },
+          "has_cover": {
+            "title": "Has Cover",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "author",
+          "total_pages",
+          "has_cover"
+        ],
+        "title": "BookListItem",
+        "type": "object"
+      },
+      "Credentials": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "Credentials",
+        "type": "object"
+      },
+      "CurrentBookIn": {
+        "properties": {
+          "book_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Id"
+          }
+        },
+        "title": "CurrentBookIn",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ProgressIn": {
+        "properties": {
+          "last_page_index": {
+            "minimum": 0.0,
+            "title": "Last Page Index",
+            "type": "integer"
+          },
+          "last_page_offset": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Last Page Offset",
+            "type": "number"
+          }
+        },
+        "required": [
+          "last_page_index",
+          "last_page_offset"
+        ],
+        "title": "ProgressIn",
+        "type": "object"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest",
+        "type": "object"
+      },
+      "RevokeRequest": {
+        "properties": {
+          "token": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "RevokeRequest",
+        "type": "object"
+      },
+      "TelegramAuthIn": {
+        "properties": {
+          "init_data": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Init Data",
+            "type": "string"
+          }
+        },
+        "required": [
+          "init_data"
+        ],
+        "title": "TelegramAuthIn",
+        "type": "object"
+      },
+      "TelegramDiagIn": {
+        "properties": {
+          "detail": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Detail",
+            "type": "string"
+          },
+          "event": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Event",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "title": "TelegramDiagIn",
+        "type": "object"
+      },
+      "TokenRequest": {
+        "description": "POST /auth/token input.\n\nOne of two identification modes: ``password`` (email + password,\nsame path as /auth/login) or ``telegram`` (init_data from the\nMini-App SDK, same validation as /auth/telegram). Native mobile\nclients pick whichever they have.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "init_data": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Init Data"
+          },
+          "mode": {
+            "pattern": "^(password|telegram)$",
+            "title": "Mode",
+            "type": "string"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "TokenRequest",
+        "type": "object"
+      },
+      "TokenResponse": {
+        "properties": {
+          "access_expires_at": {
+            "title": "Access Expires At",
+            "type": "string"
+          },
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "refresh_expires_at": {
+            "title": "Refresh Expires At",
+            "type": "string"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "token_type": {
+            "default": "Bearer",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "refresh_token",
+          "access_expires_at",
+          "refresh_expires_at"
+        ],
+        "title": "TokenResponse",
+        "type": "object"
+      },
+      "TrainingResultIn": {
+        "properties": {
+          "correct": {
+            "title": "Correct",
+            "type": "boolean"
+          },
+          "lemma": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lemma",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lemma",
+          "correct"
+        ],
+        "title": "TrainingResultIn",
+        "type": "object"
+      },
+      "TranslateBatchRequest": {
+        "description": "M21: batched ``/api/translate/batch`` payload.\n\nCapped at 50 items per request so a misbehaving client can't\nsaturate the rate limiter (each item still counts as one hit) and\nwe keep per-response latency bounded. Each item carries the same\nshape as a single ``TranslateRequest``.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TranslateRequest"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "pattern": "^(translate|simplify)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TranslateBatchRequest",
+        "type": "object"
+      },
+      "TranslateBatchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TranslateResponse"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "TranslateBatchResponse",
+        "type": "object"
+      },
+      "TranslateRequest": {
+        "properties": {
+          "lemma": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lemma",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "pattern": "^(translate|simplify)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "next_sentence": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Next Sentence",
+            "type": "string"
+          },
+          "prev_sentence": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Prev Sentence",
+            "type": "string"
+          },
+          "sentence": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Sentence",
+            "type": "string"
+          },
+          "source_book_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Book Id"
+          },
+          "unit_text": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Unit Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit_text",
+          "sentence",
+          "lemma"
+        ],
+        "title": "TranslateRequest",
+        "type": "object"
+      },
+      "TranslateResponse": {
+        "properties": {
+          "is_simplest": {
+            "default": false,
+            "title": "Is Simplest",
+            "type": "boolean"
+          },
+          "mode": {
+            "default": "translate",
+            "title": "Mode",
+            "type": "string"
+          },
+          "ru": {
+            "title": "Ru",
+            "type": "string"
+          },
+          "source": {
+            "default": "llm",
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "ru"
+        ],
+        "title": "TranslateResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "English-reader backend: SQLite-backed per-user dictionary, Gemini-powered translation + simplification, SRS training cards, Telegram Mini-App auth, bearer-token auth for native / extension clients.",
+    "title": "en-reader",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Root"
+      }
+    },
+    "/api/books": {
+      "get": {
+        "description": "Return every book owned by the signed-in user, newest first.\n\nOrdering comes straight from :func:`storage.book_list` (``created_at\nDESC``). ``has_cover`` is a convenience flag for the library UI so it\ncan decide between the real cover route and a generated placeholder\ntile without a separate HEAD request. Pre-M12 no parser sets\n``cover_path``, so the flag is ``False`` in practice — we still\ncompute it defensively so M12 doesn't have to touch this handler.",
+        "operationId": "api_books_list_api_books_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BookListItem"
+                  },
+                  "title": "Response Api Books List Api Books Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Books List"
+      }
+    },
+    "/api/books/upload": {
+      "post": {
+        "description": "Accept a multipart upload and run it through the parser pipeline.\n\nPipeline: ``UploadFile.read()`` → :func:`parse_book` (dispatches by\nfilename extension with a magic-byte fallback) → :func:`storage.book_save`\n(NLP + chunker + persist, with cover-to-disk). Size is checked\nimmediately after read: over :data:`MAX_UPLOAD_BYTES` → 413, empty\n→ 400. ``UnsupportedFormatError`` surfaces as 400 with the parser's\nown message; any other parser exception logs the traceback and\nreturns a generic 400. Persistence failures (disk full, DB locked)\nlog and return 500. Declared **before** the ``/{full_path:path}``\ncatch-all so FastAPI's router matches this route first.",
+        "operationId": "api_book_upload_api_books_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_api_book_upload_api_books_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Book Upload Api Books Upload Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Book Upload"
+      }
+    },
+    "/api/books/{book_id}": {
+      "delete": {
+        "description": "Delete a book plus its pages / images. 404 if not owned by the caller.\n\nThe row-level cascade (pages + book_images) lives in\n:func:`storage.book_delete`. If a cover file exists on disk (it\nwon't pre-M12 since parsers don't populate ``cover_path`` yet) we\nremove it here and swallow ``FileNotFoundError`` / ``OSError`` so a\nmissing or already-gone file doesn't surface as a 500.",
+        "operationId": "api_book_delete_api_books__book_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Book Delete"
+      }
+    },
+    "/api/books/{book_id}/content": {
+      "get": {
+        "description": "Return a slice of a book's pages plus the server-side dictionary.\n\n``offset`` / ``limit`` are zero-based; ``limit`` is hard-capped at\n:data:`_CONTENT_MAX_LIMIT` (20) to keep Safari happy on big books. The\nresponse shape is future-compatible with M10.1 reading-progress save:\n``last_page_index`` / ``last_page_offset`` ship as zeros today and will\ncarry real values once that task lands.\n\n``auto_unit_ids`` on each page lists the ids of units whose lemma is\npresent in the user dictionary — the frontend uses this to auto-highlight\nalready-translated words on first render.",
+        "operationId": "api_book_content_api_books__book_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Book Content Api Books  Book Id  Content Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Book Content"
+      }
+    },
+    "/api/books/{book_id}/cover": {
+      "get": {
+        "description": "Serve a book's cover image, if one was captured by the parser.\n\nUntil M12 adds real parsers, ``cover_path`` is always ``NULL`` and this\nendpoint 404s — that's fine; the frontend falls back to a generated\nplaceholder tile.",
+        "operationId": "api_book_cover_api_books__book_id__cover_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Book Cover"
+      }
+    },
+    "/api/books/{book_id}/images/{image_id}": {
+      "get": {
+        "description": "Serve an inline illustration blob (M7.1).\n\nImages are immutable once written (the id is random); cache\naggressively so browsers hit the network at most once per image.\nThe image-scope is the book, so ownership is enforced by first\nresolving the owning book — a book the caller doesn't own 404s\nexactly like a missing row.",
+        "operationId": "api_get_image_api_books__book_id__images__image_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "image_id",
+            "required": true,
+            "schema": {
+              "title": "Image Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Get Image"
+      }
+    },
+    "/api/books/{book_id}/progress": {
+      "post": {
+        "description": "Persist the reader's position for ``book_id``.\n\nValidation order is intentional: 404 for unknown/not-owned book first\n(so we don't accept progress for phantom ids), then 400 if the page\nindex is past the book's ``total_pages``. Pydantic already rejects\nout-of-range offsets (422) before this handler runs, so we don't\nre-check ``last_page_offset`` ourselves.",
+        "operationId": "api_book_progress_save_api_books__book_id__progress_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "book_id",
+            "required": true,
+            "schema": {
+              "title": "Book Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgressIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Book Progress Save"
+      }
+    },
+    "/api/catalog": {
+      "get": {
+        "description": "Return catalog books grouped into UI sections.\n\n``level`` tunes the \"По твоему уровню\" section — no persistence, the\nfrontend just sends whatever chip is selected. Defaults to B1 if the\ncaller sends nothing or a value we don't recognise.",
+        "operationId": "api_catalog_api_catalog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Catalog Api Catalog Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Catalog"
+      }
+    },
+    "/api/catalog/{catalog_id}/cover": {
+      "get": {
+        "description": "Return the preset gradient class name for a catalog entry.\n\nNo real cover files are stored for catalog books in this milestone —\nthe frontend draws a gradient tile using the preset. Returned as JSON\nrather than a file response so the client can reuse the data from\nthe list endpoint without a second round-trip.",
+        "operationId": "api_catalog_cover_api_catalog__catalog_id__cover_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalog_id",
+            "required": true,
+            "schema": {
+              "title": "Catalog Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Catalog Cover Api Catalog  Catalog Id  Cover Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Catalog Cover"
+      }
+    },
+    "/api/catalog/{catalog_id}/import": {
+      "post": {
+        "description": "Copy a catalog entry into the caller's personal library.\n\nReads the source file referenced by the catalog row, runs it through\nthe standard parse → analyze → chunk pipeline via ``storage.book_save``,\nand returns ``{\"book_id\": N}`` pointing at the freshly-created row in\nthe caller's own ``books`` table.\n\nDedup is on (title, author): if the user already has a book with the\nsame title+author (from a prior import or an unrelated upload), we\nreturn the existing book_id with 200 rather than 409 so the UX is\n\"tap → land on the book\" regardless of whether this is the first\ntime or not. The response includes ``already_imported=True`` so the\nclient can surface a different toast.",
+        "operationId": "api_catalog_import_api_catalog__catalog_id__import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalog_id",
+            "required": true,
+            "schema": {
+              "title": "Catalog Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Catalog Import Api Catalog  Catalog Id  Import Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Catalog Import"
+      }
+    },
+    "/api/dictionary": {
+      "get": {
+        "description": "Legacy flat ``{lemma: translation}`` map used by pre-M16.3 clients.\n\nKept as-is so the reader's auto-highlight path (which only needs the\nkey set) and existing tests keep working. The richer list-of-objects\nshape lives at :func:`api_dictionary_words` below.",
+        "operationId": "api_dictionary_list_api_dictionary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Api Dictionary List Api Dictionary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Dictionary List"
+      }
+    },
+    "/api/dictionary/stats": {
+      "get": {
+        "description": "Return aggregate counts per progression status (spec §5).",
+        "operationId": "api_dictionary_stats_api_dictionary_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Dictionary Stats Api Dictionary Stats Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Dictionary Stats"
+      }
+    },
+    "/api/dictionary/sync": {
+      "get": {
+        "description": "M21: delta-sync for mobile/extension clients.\n\nReturns ``{server_time, since, upserts: [...], deletes: [...]}``.\nEach upsert is a full ``user_dictionary`` row (enough to populate a\nlocal cache without a second round-trip). ``since`` is an ISO-8601\ntimestamp the client previously received as ``server_time`` — the\nserver filters by ``updated_at > since`` / ``deleted_at > since``\nso the response size is O(delta).\n\nOmit ``since`` on the first call to fetch a full snapshot; save\nthe returned ``server_time`` and pass it as ``since=`` on the next\ncall. A client that rolls back its clock is safe: the server uses\nits own wall clock for both reads and the returned server_time.",
+        "operationId": "api_dictionary_sync_api_dictionary_sync_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Dictionary Sync Api Dictionary Sync Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Dictionary Sync",
+        "tags": [
+          "dictionary"
+        ]
+      }
+    },
+    "/api/dictionary/training": {
+      "get": {
+        "description": "Return the next ``limit`` training candidates, prioritised per spec §4.",
+        "operationId": "api_dictionary_training_api_dictionary_training_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Api Dictionary Training Api Dictionary Training Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Dictionary Training"
+      }
+    },
+    "/api/dictionary/training/result": {
+      "post": {
+        "description": "Record one training answer and advance the word's progression.\n\nIdempotent on unknown lemma: ``record_training_result`` silently no-ops\nso a stale client replaying an answer after a deletion does not 404.",
+        "operationId": "api_dictionary_training_result_api_dictionary_training_result_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrainingResultIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Dictionary Training Result"
+      }
+    },
+    "/api/dictionary/words": {
+      "get": {
+        "description": "Return the rich dictionary shape for the M16.4 Words screen.\n\n``status`` filters to one of :data:`en_reader.storage.DICT_STATUSES`\n(``new`` / ``learning`` / ``review`` / ``mastered``) or ``all``.\nUnknown values 400 so a typo in the query string fails loudly rather\nthan silently returning the full list.",
+        "operationId": "api_dictionary_words_api_dictionary_words_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Status",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Api Dictionary Words Api Dictionary Words Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Dictionary Words"
+      }
+    },
+    "/api/dictionary/{lemma}": {
+      "delete": {
+        "operationId": "api_dictionary_delete_api_dictionary__lemma__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lemma",
+            "required": true,
+            "schema": {
+              "title": "Lemma",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Dictionary Delete"
+      }
+    },
+    "/api/dictionary/{lemma}/card": {
+      "get": {
+        "description": "M20.1: return the structured training card for ``lemma`` as JSON.\n\n``card_json`` is populated by the background task kicked off on the\nfirst translation — so a fresh click on a word returns an empty\npayload here for a second or two until the card lands. The\nfrontend polls or shows a \"Карточка готовится…\" placeholder rather\nthan blocking. Also 404s on a lemma the user doesn't own so a\ncurious client can't enumerate other users' vocab lists.",
+        "operationId": "api_dictionary_card_api_dictionary__lemma__card_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lemma",
+            "required": true,
+            "schema": {
+              "title": "Lemma",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Dictionary Card"
+      }
+    },
+    "/api/me/current-book": {
+      "get": {
+        "description": "Return the user's current-book pointer (M10.5).\n\n``{\"book_id\": null}`` means \"no current book — land on the library\".\nStorage lives in ``users.current_book_id`` since M11.1.",
+        "operationId": "api_get_current_book_api_me_current_book_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Get Current Book Api Me Current Book Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Get Current Book"
+      },
+      "post": {
+        "description": "Set or clear the current-book pointer (M10.5).\n\n``{\"book_id\": <id>}`` sets it (404 if the book is unknown or owned by\nsomeone else), and ``{\"book_id\": null}`` or an empty body clears it.\nWe validate the book id with ``_ensure_book_owner`` before writing so\na stale client can't park a pointer at a phantom or foreign row.",
+        "operationId": "api_set_current_book_api_me_current_book_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurrentBookIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Set Current Book"
+      }
+    },
+    "/api/me/streak": {
+      "get": {
+        "description": "Return the caller's current streak + today's daily-goal progress.\n\nM16.8: one endpoint feeds both the Library streak card and the Learn\nHome daily-goal card — enough for the MVP retention widgets without a\nseparate daily-activity API. ``streak`` counts consecutive UTC days\nwith ≥1 training answer; ``today`` carries ``{target, done, percent}``\nwhere ``done`` is today's correct-answer tally.",
+        "operationId": "api_me_streak_api_me_streak_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Me Streak Api Me Streak Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Me Streak"
+      }
+    },
+    "/api/translate": {
+      "post": {
+        "operationId": "translate_api_translate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Translate"
+      }
+    },
+    "/api/translate/batch": {
+      "post": {
+        "description": "Run up to 50 per-instance translations in one round-trip.\n\nEach item is processed sequentially through the same\n:func:`translate_one` / :func:`simplify_one` plumbing as the\nsingular endpoint, so every item hits the prompt-hash\n``llm_cache`` just like a stand-alone click. Rate-limit counts\neach item (so a batch of 50 burns 50 slots out of the 300/min\nwindow), keeping the abuse surface identical to 50 individual\nPOSTs.\n\nErrors on a single item DON'T fail the whole batch: a 502 from\nGemini for item #17 returns ``{\"ru\":\"\",\"source\":\"error\",\"mode\":\"translate\"}``\nat index 17 and every other slot still carries its real result.",
+        "operationId": "translate_batch_api_translate_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslateBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Translate Batch",
+        "tags": [
+          "translate"
+        ]
+      }
+    },
+    "/auth/link/telegram/init": {
+      "post": {
+        "description": "Mint a one-time link token and return the deep link to hand off.\n\nThe frontend opens ``deep_link`` in the Telegram app (or via\n``Telegram.WebApp.openTelegramLink`` when we're already in the\nMini App). The user's tap on \"Start\" in the bot chat sends\n``/start link_<token>`` back, which the webhook consumes.",
+        "operationId": "auth_link_telegram_init_auth_link_telegram_init_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Auth Link Telegram Init Auth Link Telegram Init Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Link Telegram Init"
+      }
+    },
+    "/auth/link/telegram/status": {
+      "get": {
+        "description": "Poll the status of a pending link request.\n\nNo ``Depends(get_current_user)`` — the 24-byte URL-safe token is\nitself the capability that authenticates this endpoint. Reasons:\n\n* The status endpoint needs to survive the keep-TG merge path,\n  where the email-user row (which the browser's session cookie\n  points at) is deleted as part of ``user_merge``. With Depends,\n  the poller would 401 before it ever learned to re-issue.\n* The token has 192 bits of entropy, a 10-minute TTL, and only\n  lands on the initiating frontend + the TG chat that scanned\n  it — both under the user's control.\n\nOn ``merged_src`` (keep-Telegram) we flip the session cookie to the\nsurviving user id in the same response. ``_handle_link_callback``\nre-points ``link_tokens.user_id`` to the winner *before* the merge\nruns so the ON DELETE CASCADE on the email user doesn't take the\ntoken row with it.",
+        "operationId": "auth_link_telegram_status_auth_link_telegram_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Auth Link Telegram Status Auth Link Telegram Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Link Telegram Status"
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "description": "Verify credentials and set the session.\n\nRate-limit is the very first check so a brute-force attempt hits the\n429 ceiling before any bcrypt verify. We deliberately return the same\n401 for \"user not found\" and \"wrong password\" so attackers can't\nenumerate valid emails. ``check_password`` also rejects the\n``__migration_placeholder__`` sentinel, which means the seed row can\nnever be logged into.",
+        "operationId": "auth_login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Auth Login Auth Login Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Login"
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "description": "Clear the session cookie. Idempotent — 200 whether or not we had one.",
+        "operationId": "auth_logout_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Logout"
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "description": "Return ``{\"email\": ...}`` for the signed-in user or 401.",
+        "operationId": "auth_me_auth_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Auth Me Auth Me Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Me"
+      }
+    },
+    "/auth/signup": {
+      "post": {
+        "description": "Create an account and log the user in.\n\nRate-limit check runs *before* any DB work so a flood can't burn\ncycles on bcrypt. Email validation errors surface as 400 (invalid\ninput); duplicate email returns 409 so the frontend can switch to a\n\"already registered — sign in?\" prompt. On success the session\ncookie is written by SessionMiddleware on response.",
+        "operationId": "auth_signup_auth_signup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Auth Signup Auth Signup Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Signup"
+      }
+    },
+    "/auth/telegram": {
+      "post": {
+        "description": "Sign a Telegram Mini-App user into a session.\n\nExpects ``init_data`` — the raw ``Telegram.WebApp.initData`` string\nthe client reads from its WebView. We HMAC-verify it (bot token is\nthe shared secret), map the Telegram user id to a local row via\n``user_upsert_telegram``, and stamp the session cookie the rest of\nthe /api/* routes already honour. 401 on any verification failure\n— no leak about which step failed.\n\nM18.2: verbose logs on every branch so production issues (client\nsending empty initData, HMAC drift, etc.) are debuggable from\n``journalctl -u en-reader``. Only the length + last 6 chars of the\nhash are logged — the user payload and full signature stay private.",
+        "operationId": "auth_telegram_auth_telegram_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramAuthIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Auth Telegram Auth Telegram Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Telegram"
+      }
+    },
+    "/auth/token": {
+      "post": {
+        "description": "Exchange email/password or Telegram initData for a bearer pair.\n\nRate-limited under the same bucket as /auth/login via\n:data:`auth_ratelimit` so brute-forcers hit the same ceiling.\nReturns an access + refresh token (opaque strings). The client\nsends ``Authorization: Bearer <access_token>`` on subsequent\nrequests and calls /auth/token/refresh when the access token\nexpires.",
+        "operationId": "auth_token_auth_token_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/token/refresh": {
+      "post": {
+        "description": "Single-use refresh: burn the presented refresh and issue a new pair.\n\n``None`` on an invalid / expired / already-used refresh token; we\ntranslate that to a 401 so the client re-authenticates via\n/auth/token. Single-use semantics blunt stolen-refresh replays — a\nthief gets at most one access-token-lifetime of abuse.",
+        "operationId": "auth_token_refresh_auth_token_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Token Refresh",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/token/revoke": {
+      "post": {
+        "description": "Explicitly revoke an access or refresh token.\n\nIdempotent: a token that's already revoked / never existed still\nreturns 204. Handlers of this endpoint never leak the reason so a\ncaller can't enumerate token validity.",
+        "operationId": "auth_token_revoke_auth_token_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Token Revoke",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/debug/health": {
+      "get": {
+        "description": "Return a small, secret-free liveness + metadata blob.\n\nPublic on purpose — designed for uptimerobot-style checks. Exposes\nonly aggregate counts and process metadata, nothing per-user. The\n``translate_counters`` block mirrors the M6.2 in-memory counters so\na quick \"are we hitting cache?\" sanity-check doesn't need a shell.",
+        "operationId": "debug_health_debug_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Debug Health Debug Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Debug Health"
+      }
+    },
+    "/debug/logs": {
+      "get": {
+        "description": "Return the tail of the in-memory log buffer as ``text/plain``.\n\nAuth: ``get_current_user`` rejects anonymous callers with 401; the\nextra admin check below returns 403 unless the signed-in user's\nemail matches ``ADMIN_EMAIL`` *and* that env var is non-empty\n(keeping the route closed on hosts that forgot to set it). ``n`` is\nclamped to ``[1, 1000]`` so a bogus query string can't ask for more\nthan the buffer actually holds.",
+        "operationId": "debug_logs_debug_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "N",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Debug Logs"
+      }
+    },
+    "/debug/tail": {
+      "get": {
+        "description": "Return the tail of the log buffer filtered by a simple regex.\n\nAny authenticated user can read this — we scope the default filter\nto translate / cache / auth events so nothing user-specific from\n*other* accounts leaks (lemma content is already public per-user,\nand the filter cuts out things like email / signup lines). If the\ncaller passes a custom ``grep`` that widens the scope, they still\nonly see whatever lines happen to be in the shared ring buffer,\nwhich is bounded to 500 lines.\n\nDesigned for M19.x diagnostics: the operator can click a word in\nthe WebView, then hit ``/debug/tail`` to see the exact prompt hash\nand cache hit/miss without needing SSH to the host.",
+        "operationId": "debug_tail_debug_tail_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "grep",
+            "required": false,
+            "schema": {
+              "default": "translate|llm cache|auth/telegram",
+              "title": "Grep",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Debug Tail"
+      }
+    },
+    "/tg/diag": {
+      "post": {
+        "description": "Client-side breadcrumb from the Mini App into our server log.\n\nM18.2: the Telegram WebView doesn't expose DevTools on mobile, so\nwhen the auto-login flow fails silently we have no way to see what\nthe client saw. This endpoint is a write-only log drain — the\nfrontend POSTs short tags (\"sdk_missing\", \"init_empty\", etc.) and\nwe land them in journalctl alongside the /auth/telegram attempts.\nNo auth gate: the worst a malicious client can do is spam our log.",
+        "operationId": "tg_diag_tg_diag_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramDiagIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Tg Diag Tg Diag Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tg Diag"
+      }
+    },
+    "/tg/webhook": {
+      "post": {
+        "description": "Telegram → us update delivery.\n\nFlow:\n\n* ``/start`` (no args) → send the Mini-App launcher button.\n* ``/start link_<TOKEN>`` → run the account-linking protocol\n  (:func:`_handle_link_start`).\n* ``callback_query`` with ``lk:<token>:<keep>`` data → resolve a\n  pending link conflict (:func:`_handle_link_callback`).\n\nEverything else silent-200s so Telegram doesn't retry legitimate\nupdates we don't care about yet. The secret-token check guards\nagainst forged POSTs to the public URL.",
+        "operationId": "tg_webhook_tg_webhook_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Tg Webhook"
+      }
+    },
+    "/{full_path}": {
+      "get": {
+        "description": "Serve index.html for SPA deep links; let /api/* and /static/* 404 normally.",
+        "operationId": "spa_fallback__full_path__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "full_path",
+            "required": true,
+            "schema": {
+              "title": "Full Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Spa Fallback"
+      }
+    }
+  }
+}

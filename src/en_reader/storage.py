@@ -399,6 +399,56 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
+    """M21: bearer-token auth + dictionary delta-sync columns.
+
+    Three related pieces of scaffolding so mobile / extension clients
+    can talk to the same backend the web SPA does:
+
+    * ``auth_tokens`` — opaque bearer tokens, stored as ``sha256`` hashes
+      so a DB leak doesn't hand attackers live sessions. ``kind`` is
+      ``access`` (short-lived, ~1h) or ``refresh`` (~30 d).
+    * ``dictionary_tombstones`` — tombstone rows for deleted
+      ``user_dictionary`` entries so a mobile client's delta-sync can
+      learn about deletions without a full table scan.
+    * ``user_dictionary.updated_at`` — stamped on every write (insert,
+      translation update, training result, card store) so ``?since=``
+      deltas are trivial. Default ``CURRENT_TIMESTAMP`` (ISO-ish string)
+      backfills existing rows with a uniform timestamp.
+    """
+    conn.execute("""
+        CREATE TABLE auth_tokens (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          token_hash TEXT NOT NULL UNIQUE,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          revoked_at TEXT
+        )
+        """)
+    conn.execute("CREATE INDEX idx_auth_tokens_user ON auth_tokens(user_id, kind)")
+    conn.execute("""
+        CREATE TABLE dictionary_tombstones (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          lemma TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          UNIQUE(user_id, lemma)
+        )
+        """)
+    conn.execute(
+        "CREATE INDEX idx_tombstones_user_time ON dictionary_tombstones(user_id, deleted_at)"
+    )
+    # ``updated_at`` is populated with ``first_seen_at`` on existing
+    # rows so a mobile client syncing for the first time pulls
+    # everything in one query. New rows land with ``now()`` via
+    # ``dict_add`` / ``card_set`` / ``record_training_result``.
+    conn.execute("ALTER TABLE user_dictionary ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+    conn.execute("UPDATE user_dictionary SET updated_at = first_seen_at WHERE updated_at = ''")
+    conn.execute("CREATE INDEX idx_user_dictionary_updated ON user_dictionary(user_id, updated_at)")
+
+
 def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
     """M20.1: structured ``user_dictionary.card_json`` for richer cards.
 
@@ -481,6 +531,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migrate_v9_to_v10,
     _migrate_v10_to_v11,
     _migrate_v11_to_v12,
+    _migrate_v12_to_v13,
 ]
 
 
@@ -535,33 +586,56 @@ def dict_add(
     now = datetime.now(timezone.utc)
     first_seen = now.isoformat()
     next_review = (now + timedelta(days=1)).isoformat()
+    lemma_l = lemma.lower()
     with conn:
         conn.execute(
             "INSERT OR IGNORE INTO user_dictionary("
             "user_id, lemma, translation, first_seen_at, "
             "status, correct_streak, wrong_count, "
-            "last_reviewed_at, next_review_at, example, source_book_id"
-            ") VALUES(?, ?, ?, ?, 'new', 0, 0, NULL, ?, ?, ?)",
+            "last_reviewed_at, next_review_at, example, source_book_id, updated_at"
+            ") VALUES(?, ?, ?, ?, 'new', 0, 0, NULL, ?, ?, ?, ?)",
             (
                 user_id,
-                lemma.lower(),
+                lemma_l,
                 translation,
                 first_seen,
                 next_review,
                 example,
                 source_book_id,
+                first_seen,
             ),
+        )
+        # M21: adding a lemma clears a prior tombstone — otherwise a
+        # delta-sync client would see the word as both present AND
+        # deleted.
+        conn.execute(
+            "DELETE FROM dictionary_tombstones WHERE user_id = ? AND lemma = ?",
+            (user_id, lemma_l),
         )
 
 
 def dict_remove(lemma: str, *, user_id: int = SEED_USER_ID) -> None:
-    """Delete the row for ``lemma`` (case-insensitive). No error if missing."""
+    """Delete the row for ``lemma`` (case-insensitive). No error if missing.
+
+    M21: writes a ``dictionary_tombstones`` row alongside the DELETE so
+    a delta-sync client that was online when the row existed learns
+    about the removal without a full-table diff.
+    """
     conn = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    lemma_l = lemma.lower()
     with conn:
-        conn.execute(
+        cur = conn.execute(
             "DELETE FROM user_dictionary WHERE user_id = ? AND lemma = ?",
-            (user_id, lemma.lower()),
+            (user_id, lemma_l),
         )
+        if cur.rowcount > 0:
+            conn.execute(
+                "INSERT INTO dictionary_tombstones(user_id, lemma, deleted_at) "
+                "VALUES(?, ?, ?) "
+                "ON CONFLICT(user_id, lemma) DO UPDATE SET deleted_at = excluded.deleted_at",
+                (user_id, lemma_l, now),
+            )
 
 
 def dict_get(lemma: str, *, user_id: int = SEED_USER_ID) -> str | None:
@@ -583,6 +657,56 @@ def dict_all(*, user_id: int = SEED_USER_ID) -> dict[str, str]:
         (user_id,),
     )
     return {row["lemma"]: row["translation"] for row in cur.fetchall()}
+
+
+def dict_sync(
+    since: str | None = None,
+    *,
+    user_id: int = SEED_USER_ID,
+) -> dict:
+    """Return a delta + full snapshot for a native client's /sync call.
+
+    ``since`` is an ISO-8601 timestamp; when provided, only rows with
+    ``updated_at > since`` land in ``upserts`` and only tombstones with
+    ``deleted_at > since`` land in ``deletes``. ``since=None`` returns a
+    full snapshot (good for first-time sync).
+
+    ``server_time`` is the wall-clock UTC timestamp the server used to
+    filter; the client echoes it back as ``since=`` on the next call so
+    races between write + fetch can't drop a row. Shape chosen so
+    response size is O(delta), not O(dictionary).
+    """
+    conn = get_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    params_u: list[Any] = [user_id]
+    where_u = "WHERE user_id = ?"
+    if since:
+        where_u += " AND updated_at > ?"
+        params_u.append(since)
+    cur = conn.execute(
+        f"SELECT lemma, translation, status, correct_streak, wrong_count, "
+        f"last_reviewed_at, next_review_at, example, source_book_id, "
+        f"card_text, card_json, card_generated_at, updated_at "
+        f"FROM user_dictionary {where_u}",
+        params_u,
+    )
+    upserts = [dict(row) for row in cur.fetchall()]
+    params_t: list[Any] = [user_id]
+    where_t = "WHERE user_id = ?"
+    if since:
+        where_t += " AND deleted_at > ?"
+        params_t.append(since)
+    cur = conn.execute(
+        f"SELECT lemma, deleted_at FROM dictionary_tombstones {where_t}",
+        params_t,
+    )
+    deletes = [dict(row) for row in cur.fetchall()]
+    return {
+        "server_time": now_iso,
+        "since": since,
+        "upserts": upserts,
+        "deletes": deletes,
+    }
 
 
 # ---------- LLM prompt cache (M19.1) ----------
@@ -662,8 +786,8 @@ def card_set(
     """
     conn = get_db()
     now = datetime.now(timezone.utc).isoformat()
-    sets: list[str] = ["card_generated_at = ?"]
-    params: list[Any] = [now]
+    sets: list[str] = ["card_generated_at = ?", "updated_at = ?"]
+    params: list[Any] = [now, now]
     if card_text is not None:
         sets.append("card_text = ?")
         params.append(card_text)
@@ -831,7 +955,8 @@ def record_training_result(
     with conn:
         conn.execute(
             "UPDATE user_dictionary SET status = ?, correct_streak = ?, "
-            "wrong_count = ?, last_reviewed_at = ?, next_review_at = ? "
+            "wrong_count = ?, last_reviewed_at = ?, next_review_at = ?, "
+            "updated_at = ? "
             "WHERE user_id = ? AND lemma = ?",
             (
                 new_status,
@@ -839,6 +964,7 @@ def record_training_result(
                 new_wrong,
                 now_iso,
                 next_review,
+                now_iso,
                 user_id,
                 lemma.lower(),
             ),

@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from en_reader import storage, tg
+from en_reader import storage, tg, tokens
 from en_reader.auth import (
     auth_ratelimit,
     check_password,
@@ -302,7 +302,36 @@ class OriginCheckMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app = FastAPI(title="en-reader", lifespan=lifespan)
+app = FastAPI(
+    title="en-reader",
+    description=(
+        "English-reader backend: SQLite-backed per-user dictionary, "
+        "Gemini-powered translation + simplification, SRS training cards, "
+        "Telegram Mini-App auth, bearer-token auth for native / extension "
+        "clients."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+
+# ---------- M21: path-rewrite alias /api/v1/* → /api/* ----------
+#
+# Native / extension clients call ``/api/v1/…`` so we have a stable
+# surface independent of internal churn. Inside the app every route is
+# still declared under ``/api/…``; this middleware rewrites the path
+# on the request object so the route resolver matches. The contract
+# with ``/api/v1/*`` is "only add fields, never rename, never remove".
+class ApiVersionRewriteMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):  # noqa: D401 — framework hook
+        path = request.scope.get("path", "")
+        if path.startswith("/api/v1/"):
+            new_path = "/api/" + path[len("/api/v1/") :]
+            request.scope["path"] = new_path
+            request.scope["raw_path"] = new_path.encode("utf-8")
+        return await call_next(request)
+
+
 # Middleware registration in Starlette wraps **around** previously-added
 # middleware, so the last ``add_middleware`` call runs first on the way
 # in. We want, inbound:
@@ -312,6 +341,31 @@ app = FastAPI(title="en-reader", lifespan=lifespan)
 # SessionMiddleware (so the Origin check sees session cookies if it ever
 # needs them), then OriginCheck outermost (reject CSRF before we touch
 # the session or any route handler).
+# M21: CORS for mobile / extension clients. The env var
+# ``CORS_ALLOW_ORIGINS`` is comma-separated (e.g.
+# ``https://enreader.zagirnur.dev,https://staging.example.com``). A
+# regex-allowlist covers the two well-known browser-extension origin
+# prefixes (Chromium + Firefox). Credentials are allowed on the cookie
+# path; bearer-token clients don't need them. If nothing is configured
+# and we aren't in prod, we fall back to a dev-friendly wildcard that
+# still refuses credentials — a compromise that keeps ``curl`` / local
+# dev working without handing cookies to arbitrary origins.
+_CORS_ORIGINS = tuple(
+    o.strip() for o in os.environ.get("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()
+)
+_CORS_REGEX = r"^(chrome-extension|moz-extension|safari-web-extension)://[^/]+$"
+from fastapi.middleware.cors import CORSMiddleware  # local import to keep the top tidy
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(_CORS_ORIGINS) if _CORS_ORIGINS else [],
+    allow_origin_regex=_CORS_REGEX,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=600,
+)
+
 app.add_middleware(SecurityHeadersMiddleware)
 # SessionMiddleware goes on before any routes run — Starlette walks the
 # middleware stack on every request, so position doesn't affect route
@@ -336,6 +390,11 @@ app.add_middleware(
     https_only=_IS_PROD,
 )
 app.add_middleware(OriginCheckMiddleware)
+# ApiVersionRewriteMiddleware sits OUTSIDE OriginCheck so route
+# resolution sees the rewritten ``/api/*`` path, but the Origin check
+# runs on the already-rewritten request. Outermost in add_middleware
+# order = last-added = first-to-run on inbound.
+app.add_middleware(ApiVersionRewriteMiddleware)
 # ProxyHeadersMiddleware goes on *last* so, in the reverse-order inbound
 # dance, it runs **first** and ``request.client.host`` is already the real
 # client IP by the time OriginCheck / Session / routes see the request.
@@ -367,7 +426,10 @@ class TranslateRequest(BaseModel):
     # synonym in the same grammatical form, OR a sentinel that the
     # word is already simplest. Simplify mode does NOT touch
     # user_dictionary or the background card builder.
-    mode: str = Field(default="translate", pattern=r"^(translate|simplify)$")
+    # M21: ``None`` means "unset" — the single endpoint normalises to
+    # ``translate`` while the batch endpoint can tell an unset item
+    # apart from an item that explicitly pinned ``translate``.
+    mode: str | None = Field(default=None, pattern=r"^(translate|simplify)$")
 
 
 class TranslateResponse(BaseModel):
@@ -473,14 +535,34 @@ def _client_ip(request: Request) -> str:
     return client.host
 
 
+def _uid_from_bearer(request: Request) -> int | None:
+    """Resolve a ``Authorization: Bearer <token>`` header to a user_id.
+
+    Returns ``None`` if the header is missing, malformed, or the token
+    is expired / revoked. Exists so ``get_current_user`` can accept
+    cookie sessions AND bearer tokens without duplicating the DB lookup.
+    """
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if not auth:
+        return None
+    parts = auth.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    return tokens.verify_access(parts[1].strip())
+
+
 def get_current_user(request: Request) -> User:
     """FastAPI dependency: resolve the signed-in user or 401.
 
-    Wired into every ``/api/*`` route in M11.3 so each DAO call runs under
-    the owner's id; handlers just declare
-    ``user: User = Depends(get_current_user)`` and pass ``user.id`` through.
+    Accepts either a Starlette session cookie (web SPA / Mini App) or
+    a bearer token from the M21 ``/auth/token`` endpoint (native
+    mobile / browser extensions). Bearer takes precedence — if both
+    are sent (shouldn't happen in practice) the bearer wins because
+    the ``Authorization`` header is a direct opt-in per request.
     """
-    uid = request.session.get("user_id")
+    uid = _uid_from_bearer(request)
+    if uid is None:
+        uid = request.session.get("user_id")
     if not uid:
         raise HTTPException(status_code=401)
     user = storage.user_by_id(uid)
@@ -688,6 +770,141 @@ def _background_build_card(
     )
 
 
+class TranslateBatchRequest(BaseModel):
+    """M21: batched ``/api/translate/batch`` payload.
+
+    Capped at 50 items per request so a misbehaving client can't
+    saturate the rate limiter (each item still counts as one hit) and
+    we keep per-response latency bounded. Each item carries the same
+    shape as a single ``TranslateRequest``.
+    """
+
+    items: list[TranslateRequest] = Field(min_length=1, max_length=50)
+    # Caller MAY pin a single ``mode`` for the whole batch — convenient
+    # for readers that only issue translate or only simplify at a time.
+    # Per-item ``mode`` inside ``items`` wins when set.
+    mode: str | None = Field(default=None, pattern=r"^(translate|simplify)$")
+
+
+class TranslateBatchResponse(BaseModel):
+    results: list[TranslateResponse]
+
+
+@app.post(
+    "/api/translate/batch",
+    response_model=TranslateBatchResponse,
+    tags=["translate"],
+)
+def translate_batch(
+    req: TranslateBatchRequest,
+    background: BackgroundTasks,
+    user: User = Depends(get_current_user),
+) -> TranslateBatchResponse:
+    """Run up to 50 per-instance translations in one round-trip.
+
+    Each item is processed sequentially through the same
+    :func:`translate_one` / :func:`simplify_one` plumbing as the
+    singular endpoint, so every item hits the prompt-hash
+    ``llm_cache`` just like a stand-alone click. Rate-limit counts
+    each item (so a batch of 50 burns 50 slots out of the 300/min
+    window), keeping the abuse surface identical to 50 individual
+    POSTs.
+
+    Errors on a single item DON'T fail the whole batch: a 502 from
+    Gemini for item #17 returns ``{"ru":"","source":"error","mode":"translate"}``
+    at index 17 and every other slot still carries its real result.
+    """
+    results: list[TranslateResponse] = []
+    for item in req.items:
+        if not rl_translate.check(str(user.id)):
+            raise HTTPException(
+                status_code=429,
+                detail="slow down",
+                headers={"Retry-After": str(rl_translate.window)},
+            )
+        eff_mode = item.mode or req.mode or "translate"
+        # Route through the same handler logic by building a single
+        # ``TranslateRequest`` with the effective mode and calling the
+        # inner worker directly. Keeping the plumbing here (rather than
+        # calling the FastAPI handler) avoids re-paying the
+        # Depends(get_current_user) round-trip 50× per batch.
+        try:
+            if eff_mode == "simplify":
+                simplified, is_simplest, src = simplify_one(
+                    item.unit_text,
+                    item.sentence,
+                    prev_sentence=item.prev_sentence,
+                    next_sentence=item.next_sentence,
+                )
+                results.append(
+                    TranslateResponse(
+                        ru=simplified or item.unit_text,
+                        source=src,
+                        text=simplified,
+                        is_simplest=is_simplest,
+                        mode="simplify",
+                    )
+                )
+                continue
+            existing = storage.dict_get(item.lemma, user_id=user.id)
+            ru, llm_source = translate_one(
+                item.unit_text,
+                item.sentence,
+                prev_sentence=item.prev_sentence,
+                next_sentence=item.next_sentence,
+            )
+            source = "dict" if existing is not None else llm_source
+            if existing is None:
+                counters.translate_miss += 1
+                storage.dict_add(
+                    item.lemma,
+                    ru,
+                    user_id=user.id,
+                    example=item.sentence,
+                    source_book_id=item.source_book_id,
+                )
+                background.add_task(
+                    _background_build_card,
+                    user_id=user.id,
+                    lemma=item.lemma,
+                    unit_text=item.unit_text,
+                    sentence=item.sentence,
+                    ru=ru,
+                )
+            else:
+                counters.translate_hit += 1
+                if storage.card_get(item.lemma, user_id=user.id) is None:
+                    background.add_task(
+                        _background_build_card,
+                        user_id=user.id,
+                        lemma=item.lemma,
+                        unit_text=item.unit_text,
+                        sentence=item.sentence,
+                        ru=ru,
+                    )
+            results.append(
+                TranslateResponse(
+                    ru=ru,
+                    source=source,
+                    text=None,
+                    is_simplest=False,
+                    mode="translate",
+                )
+            )
+        except TranslateError as e:
+            logger.warning("batch item failed: lemma=%r err=%r", item.lemma, e)
+            results.append(
+                TranslateResponse(
+                    ru="",
+                    source="error",
+                    text=None,
+                    is_simplest=False,
+                    mode=eff_mode,
+                )
+            )
+    return TranslateBatchResponse(results=results)
+
+
 @app.post("/api/translate", response_model=TranslateResponse)
 def translate(
     req: TranslateRequest,
@@ -706,7 +923,8 @@ def translate(
     # same grammatical form, or a sentinel that the input is already
     # simplest. Skips dict_add and the background card task entirely;
     # those belong to the translate path's RU-vocab semantics.
-    if req.mode == "simplify":
+    req_mode = req.mode or "translate"
+    if req_mode == "simplify":
         try:
             simplified, is_simplest, src = simplify_one(
                 req.unit_text,
@@ -799,6 +1017,28 @@ def api_dictionary_list(user: User = Depends(get_current_user)) -> dict[str, str
     shape lives at :func:`api_dictionary_words` below.
     """
     return storage.dict_all(user_id=user.id)
+
+
+@app.get("/api/dictionary/sync", tags=["dictionary"])
+def api_dictionary_sync(
+    since: str | None = None,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """M21: delta-sync for mobile/extension clients.
+
+    Returns ``{server_time, since, upserts: [...], deletes: [...]}``.
+    Each upsert is a full ``user_dictionary`` row (enough to populate a
+    local cache without a second round-trip). ``since`` is an ISO-8601
+    timestamp the client previously received as ``server_time`` — the
+    server filters by ``updated_at > since`` / ``deleted_at > since``
+    so the response size is O(delta).
+
+    Omit ``since`` on the first call to fetch a full snapshot; save
+    the returned ``server_time`` and pass it as ``since=`` on the next
+    call. A client that rolls back its clock is safe: the server uses
+    its own wall clock for both reads and the returned server_time.
+    """
+    return storage.dict_sync(since=since, user_id=user.id)
 
 
 @app.get("/api/dictionary/words")
@@ -1528,7 +1768,10 @@ def auth_logout(request: Request) -> Response:
 @app.get("/auth/me")
 def auth_me(request: Request) -> dict:
     """Return ``{"email": ...}`` for the signed-in user or 401."""
-    uid = request.session.get("user_id")
+    # M21: accept bearer alongside cookie so a mobile/extension client
+    # can hit /auth/me to probe its token without falling back to
+    # cookie semantics.
+    uid = _uid_from_bearer(request) or request.session.get("user_id")
     if not uid:
         raise HTTPException(status_code=401)
     user = storage.user_by_id(uid)
@@ -1538,6 +1781,110 @@ def auth_me(request: Request) -> dict:
         request.session.clear()
         raise HTTPException(status_code=401)
     return {"email": user.email}
+
+
+# ---------- M21: bearer-token endpoints ----------
+
+
+class TokenRequest(BaseModel):
+    """POST /auth/token input.
+
+    One of two identification modes: ``password`` (email + password,
+    same path as /auth/login) or ``telegram`` (init_data from the
+    Mini-App SDK, same validation as /auth/telegram). Native mobile
+    clients pick whichever they have.
+    """
+
+    mode: str = Field(pattern=r"^(password|telegram)$")
+    email: str | None = None
+    password: str | None = None
+    init_data: str | None = Field(default=None, max_length=8192)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "Bearer"
+    access_expires_at: str
+    refresh_expires_at: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/auth/token", response_model=TokenResponse, tags=["auth"])
+def auth_token(p: TokenRequest, request: Request) -> TokenResponse:
+    """Exchange email/password or Telegram initData for a bearer pair.
+
+    Rate-limited under the same bucket as /auth/login via
+    :data:`auth_ratelimit` so brute-forcers hit the same ceiling.
+    Returns an access + refresh token (opaque strings). The client
+    sends ``Authorization: Bearer <access_token>`` on subsequent
+    requests and calls /auth/token/refresh when the access token
+    expires.
+    """
+    ip = _client_ip(request)
+    if not auth_ratelimit.check(ip):
+        raise HTTPException(status_code=429, detail="rate limited")
+
+    if p.mode == "password":
+        if not p.email or not p.password:
+            raise HTTPException(status_code=400, detail="email and password required")
+        try:
+            email_norm = normalize_email(p.email)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid email")
+        user = storage.user_by_email(email_norm)
+        if user is None or not check_password(p.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="invalid credentials")
+        return TokenResponse(**tokens.issue(user.id))
+
+    # mode == "telegram"
+    if not _TELEGRAM_BOT_TOKEN:
+        raise HTTPException(status_code=503, detail="telegram not configured")
+    if not p.init_data:
+        raise HTTPException(status_code=400, detail="init_data required")
+    try:
+        tg_user = tg.verify_init_data(p.init_data, _TELEGRAM_BOT_TOKEN)
+    except tg.InvalidInitDataError:
+        raise HTTPException(status_code=401, detail="invalid telegram init")
+    user = storage.user_upsert_telegram(
+        tg_user.id,
+        display_name=(tg_user.first_name or tg_user.username or str(tg_user.id))[:80],
+    )
+    return TokenResponse(**tokens.issue(user.id))
+
+
+@app.post("/auth/token/refresh", response_model=TokenResponse, tags=["auth"])
+def auth_token_refresh(p: RefreshRequest) -> TokenResponse:
+    """Single-use refresh: burn the presented refresh and issue a new pair.
+
+    ``None`` on an invalid / expired / already-used refresh token; we
+    translate that to a 401 so the client re-authenticates via
+    /auth/token. Single-use semantics blunt stolen-refresh replays — a
+    thief gets at most one access-token-lifetime of abuse.
+    """
+    pair = tokens.rotate_refresh(p.refresh_token)
+    if pair is None:
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+    return TokenResponse(**pair)
+
+
+class RevokeRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/auth/token/revoke", status_code=204, tags=["auth"])
+def auth_token_revoke(p: RevokeRequest) -> Response:
+    """Explicitly revoke an access or refresh token.
+
+    Idempotent: a token that's already revoked / never existed still
+    returns 204. Handlers of this endpoint never leak the reason so a
+    caller can't enumerate token validity.
+    """
+    tokens.revoke_token(p.token)
+    return Response(status_code=204)
 
 
 # ---------- upload (M12.4) ----------
