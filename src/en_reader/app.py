@@ -270,6 +270,20 @@ _ALLOWED_ORIGINS = tuple(
     o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()
 )
 
+# Browser extensions always present their own ``chrome-extension://<id>`` /
+# ``moz-extension://<id>`` Origin on cross-origin fetches. The CORS layer
+# already whitelists these via a regex; the CSRF-style OriginCheck below
+# mirrors that list so ``/auth/token`` and other non-safe methods from
+# the en-reader extension don't hit 403. Extension origins are safe
+# because (a) the user explicitly installed the extension and (b) the
+# browser does not allow a page to spoof ``chrome-extension://`` in its
+# own Origin header.
+_EXTENSION_ORIGIN_PREFIXES = (
+    "chrome-extension://",
+    "moz-extension://",
+    "safari-web-extension://",
+)
+
 
 class OriginCheckMiddleware(BaseHTTPMiddleware):
     """Cheap CSRF guard on top of ``SameSite=Lax`` session cookies.
@@ -292,8 +306,13 @@ class OriginCheckMiddleware(BaseHTTPMiddleware):
             origin = request.headers.get("origin") or request.headers.get("referer", "")
             if origin:
                 expected = str(request.base_url).rstrip("/")
-                if not origin.startswith(expected) and not any(
-                    origin.startswith(a) for a in _ALLOWED_ORIGINS
+                is_extension = any(
+                    origin.startswith(p) for p in _EXTENSION_ORIGIN_PREFIXES
+                )
+                if (
+                    not is_extension
+                    and not origin.startswith(expected)
+                    and not any(origin.startswith(a) for a in _ALLOWED_ORIGINS)
                 ):
                     return JSONResponse(
                         {"detail": "forbidden origin"},

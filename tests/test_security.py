@@ -92,6 +92,55 @@ def test_origin_check_post_cross_origin_403(client: TestClient) -> None:
     assert r.json() == {"detail": "forbidden origin"}
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "chrome-extension://mjobhpjblklomcaonfjnklkoenfgdpig",
+        "moz-extension://abcdef12-3456-7890-abcd-ef1234567890",
+        "safari-web-extension://ABCDEF01-2345-6789-ABCD-EF0123456789",
+    ],
+)
+def test_origin_check_browser_extensions_pass(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    """Browser-extension Origins bypass the CSRF check.
+
+    CORS already whitelists these via regex; OriginCheck mirrors that
+    list so the en-reader extension's POSTs don't get blocked.
+    """
+    monkeypatch.setattr(
+        "en_reader.app.translate_one",
+        lambda *_a, **_k: ("ок", "llm"),
+    )
+    r = client.post(
+        "/api/translate",
+        json={"unit_text": "x", "sentence": "x", "lemma": "x"},
+        headers={"Origin": origin},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_auth_token_from_extension_origin() -> None:
+    """``/auth/token`` specifically — the extension login entry point —
+    must accept requests from ``chrome-extension://`` Origins."""
+    from fastapi.testclient import TestClient
+
+    from en_reader.app import app
+
+    c = TestClient(app)
+    # Sign up first (direct same-origin call so we have a user).
+    c.post("/auth/signup", json={"email": "ext@example.com", "password": "extpass-1234"})
+
+    r = c.post(
+        "/auth/token",
+        json={"mode": "password", "email": "ext@example.com", "password": "extpass-1234"},
+        headers={"Origin": "chrome-extension://mjobhpjblklomcaonfjnklkoenfgdpig"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "access_token" in body
+
+
 def test_origin_check_post_matching_origin_passes(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
