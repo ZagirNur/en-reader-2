@@ -1,0 +1,91 @@
+/*
+ * Injected on any page where en-reader is active.
+ * All class names are prefixed `enr-` to avoid collisions with host page CSS.
+ */
+
+.enr-token {
+  cursor: pointer;
+  border-bottom: 1px dotted rgba(100, 120, 200, 0.45);
+  transition: background-color 120ms ease;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.enr-token:hover {
+  background-color: rgba(100, 120, 200, 0.16);
+}
+
+.enr-token--translated {
+  border-bottom-style: solid;
+  border-bottom-color: rgba(40, 120, 80, 0.55);
+  background-color: rgba(40, 160, 90, 0.09);
+  color: inherit;
+  font-style: normal;
+}
+
+.enr-token--loading {
+  opacity: 0.6;
+}
+
+.enr-token--error {
+  border-bottom-color: rgba(200, 60, 60, 0.6);
+  background-color: rgba(200, 60, 60, 0.08);
+}
+
+.enr-token--known {
+  border-bottom-color: rgba(120, 90, 160, 0.55);
+  background-color: rgba(120, 90, 160, 0.07);
+}
+
+#enr-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2147483647;
+  font: 14px/1.4 system-ui, sans-serif;
+  background: #111;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.28);
+  max-width: 320px;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+#enr-toast.enr-toast--show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#enr-badge {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 2147483646;
+  font: 12px/1 system-ui, sans-serif;
+  background: rgba(17, 17, 17, 0.86);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.24);
+  cursor: default;
+  user-select: none;
+}
+
+#enr-badge button {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.35);
+  color: #fff;
+  font: inherit;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#enr-badge button:hover {
+  background: rgba(255,255,255,0.14);
+}

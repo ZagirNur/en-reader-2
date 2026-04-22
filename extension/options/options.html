@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>en-reader — настройки</title>
+  <style>
+    body {
+      font: 14px/1.5 system-ui, -apple-system, sans-serif;
+      max-width: 520px;
+      margin: 40px auto;
+      padding: 0 16px;
+      color: #222;
+    }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .sub { color: #666; margin-bottom: 24px; }
+    label { display: block; font-weight: 600; margin-top: 16px; }
+    input[type="text"], input[type="password"], input[type="email"], input[type="url"] {
+      width: 100%;
+      padding: 8px 10px;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font: inherit;
+    }
+    button {
+      margin-top: 20px;
+      padding: 9px 16px;
+      background: #2f6fd8;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: transparent;
+      color: #2f6fd8;
+      border: 1px solid #2f6fd8;
+      margin-left: 8px;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .status { margin-top: 16px; padding: 10px 12px; border-radius: 6px; }
+    .status.ok { background: #e4f5e9; color: #1d5a2c; }
+    .status.err { background: #fdecec; color: #8a2020; }
+    .status.info { background: #eef3fb; color: #234; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+    .row .who { color: #234; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>en-reader — inline reader</h1>
+  <div class="sub">Расширение читает английские статьи прямо на странице и заменяет слова на русские переводы. Все переводы сохраняются в твой словарь на сервере.</div>
+
+  <label for="baseUrl">Сервер</label>
+  <input id="baseUrl" type="url" placeholder="https://enreader.zagirnur.dev" />
+
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="username" />
+
+  <label for="password">Пароль</label>
+  <input id="password" type="password" autocomplete="current-password" />
+
+  <div>
+    <button id="loginBtn">Войти</button>
+    <button id="logoutBtn" class="secondary" hidden>Выйти</button>
+  </div>
+
+  <div id="status" class="status info" hidden></div>
+
+  <div class="row" id="who" hidden>
+    <div>Авторизован как</div>
+    <div class="who" id="whoEmail"></div>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
